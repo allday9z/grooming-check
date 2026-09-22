@@ -15,6 +15,25 @@
 import { sql } from "./db"
 import { CHECKLIST_ITEMS, CHECKLIST_TOTAL } from "./checklist"
 
+// The postgres driver doesn't always auto-deserialize JSONB columns back
+// into JS arrays in this environment (observed directly: a fresh row's
+// `items`/`history` columns came back as raw JSON strings, not arrays) —
+// same defensive parsing already needed for JSONB columns in the sibling
+// uficon-prf project this session. Always route reads through this instead
+// of assuming the driver parsed it.
+export function parseJsonbArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[]
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
 export interface ChecklistItemInput {
   itemId: string
   result: "pass" | "fail" | null
@@ -131,7 +150,7 @@ export async function submitForReview(token: string, input: InspectionInput, act
   }
 
   const { score, percent, overallResult } = scoreOf(items)
-  const history: HistoryEntry[] = insp.history ?? []
+  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
   history.push({ action: "submitted", by: actorName, at: new Date().toISOString(), cycle: insp.cycle, comment: null })
 
   await sql`
@@ -149,7 +168,7 @@ export async function approve(id: number, reviewerName: string): Promise<void> {
   if (!insp) throw new Error("not_found")
   if (insp.status !== "pending") throw new Error("wrong_status")
 
-  const history: HistoryEntry[] = insp.history ?? []
+  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
   history.push({ action: "approved", by: reviewerName, at: new Date().toISOString(), cycle: insp.cycle, comment: null })
 
   await sql`
@@ -165,7 +184,7 @@ export async function reject(id: number, reviewerName: string, comment: string):
   if (!comment?.trim()) throw new Error("comment_required")
 
   const nextCycle = insp.cycle + 1
-  const history: HistoryEntry[] = insp.history ?? []
+  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
   history.push({ action: "rejected", by: reviewerName, at: new Date().toISOString(), cycle: insp.cycle, comment: comment.trim() })
 
   await sql`

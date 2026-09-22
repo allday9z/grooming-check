@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, POSITIONS, BRANCHES } from "../lib/checklist"
-import { createDraft, getByToken, listAll } from "../lib/inspections"
+import { createDraft, getByToken, listAll, parseJsonbArray } from "../lib/inspections"
 import { listPhotoItemIds } from "../lib/photos"
 
 const app = new Hono()
@@ -67,7 +67,7 @@ app.get("/:token", async (c) => {
 
   const editable = insp.status === "draft" || insp.status === "rejected"
   const photoItemIds = new Set(await listPhotoItemIds(insp.id))
-  const itemsById = new Map((insp.items as any[]).map((i) => [i.itemId, i]))
+  const itemsById = new Map(parseJsonbArray<any>(insp.items).map((i) => [i.itemId, i]))
 
   const rejectBanner = insp.status === "rejected" && insp.hr_comment
     ? `<div class="reject-banner"><b>ถูกตีกลับโดย ${esc(insp.hr_reviewer)}</b><p style="margin:6px 0 0;">${esc(insp.hr_comment)}</p></div>`

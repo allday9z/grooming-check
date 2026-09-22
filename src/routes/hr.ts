@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL } from "../lib/checklist"
-import { listAll, countByStatus, getById, approve, reject } from "../lib/inspections"
+import { listAll, countByStatus, getById, approve, reject, parseJsonbArray } from "../lib/inspections"
 import { listPhotoItemIds } from "../lib/photos"
 
 const app = new Hono()
@@ -71,7 +71,7 @@ app.get("/:id", async (c) => {
   if (!insp) return c.text("ไม่พบรายการตรวจ", 404)
 
   const photoItemIds = new Set(await listPhotoItemIds(insp.id))
-  const itemsById = new Map((insp.items as any[]).map((i) => [i.itemId, i]))
+  const itemsById = new Map(parseJsonbArray<any>(insp.items).map((i) => [i.itemId, i]))
   const categoryOrder = ["uniform", "personal", "card"]
 
   const checklistHtml = categoryOrder.map((cat) => {
@@ -91,7 +91,7 @@ app.get("/:id", async (c) => {
     return `<div class="checklist-cat">${esc(CATEGORY_LABELS[cat]!)}</div>${itemsHtml}`
   }).join("")
 
-  const history = (insp.history as any[]) || []
+  const history = parseJsonbArray<any>(insp.history)
   const historyHtml = history.length
     ? `<div class="table-wrap"><table><thead><tr><th>เวลา</th><th>การกระทำ</th><th>โดย</th><th>รอบ</th><th>หมายเหตุ</th></tr></thead><tbody>
         ${history.slice().reverse().map((h) => `<tr><td>${fmtDateTimeTH(h.at)}</td><td>${esc({ created: "สร้างรายการ", saved: "บันทึกร่าง", submitted: "ส่งตรวจสอบ", approved: "อนุมัติ", rejected: "ตีกลับ" }[h.action as string] || h.action)}</td><td>${esc(h.by)}</td><td>${h.cycle}</td><td>${esc(h.comment || "-")}</td></tr>`).join("")}
