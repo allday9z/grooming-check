@@ -1,0 +1,13 @@
+{
+  "name": "grooming-check",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "postgres": "^3.4.5"
+  }
+}
