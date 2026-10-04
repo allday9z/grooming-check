@@ -94,6 +94,11 @@ export function renderPage(opts: { title: string; body: string; styles?: string;
   .mini-label { display:block; font-size:12.5px; font-weight:600; color: var(--muted); margin-bottom:4px; }
   .note-box textarea { width:100%; padding:9px 10px; border:1.5px solid var(--border); border-radius:8px; font-family:inherit; font-size:14px; }
   .plan-card { border-left:4px solid #d97706; }
+  .group-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap:10px; }
+  .group-slot { border:1.5px dashed var(--border); border-radius:10px; padding:6px; display:flex; flex-direction:column; gap:6px; align-items:center; background:#fafcfc; }
+  .group-img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; cursor:zoom-in; }
+  .group-empty { width:100%; aspect-ratio:1; align-items:center; justify-content:center; color:#94a3b8; font-size:13px; border-radius:8px; background:#f1f5f5; }
+  .group-actions { display:flex; gap:4px; flex-wrap:wrap; justify-content:center; }
   .fix-line { font-size:13px; color:#1f5f3a; margin:4px 0 0; }
   tr.due-overdue td { background:#fdf1f1; }
   tr.due-soon td { background:#fff8ec; }

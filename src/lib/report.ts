@@ -8,7 +8,7 @@ import * as XLSX from "xlsx"
 import { BRANCHES, CHECKLIST_ITEMS, CHECKLIST_TOTAL } from "./checklist"
 import { esc, STATUS_LABEL } from "../ui/layout"
 import { fmtDateTH, fmtDateTimeTH } from "./format"
-import { parseJsonbArray, planDueState, PASS_THRESHOLD_PERCENT, type ListFilters } from "./inspections"
+import { parseJsonbArray, planDueState, inspectionCode, PASS_THRESHOLD_PERCENT, type ListFilters } from "./inspections"
 import { CATEGORY_LABELS } from "./checklist"
 
 export function filtersFromQuery(q: (k: string) => string | undefined): ListFilters & { page: number } {
@@ -40,7 +40,7 @@ export function filterBarHtml(basePath: string, f: ListFilters, opts: { keepStat
   return `
   <form class="filter-bar" method="get" action="${basePath}">
     ${opts.keepStatus && f.status ? `<input type="hidden" name="status" value="${esc(f.status)}">` : ""}
-    <div class="fb-field fb-search"><label>ค้นหา</label><input type="text" name="q" value="${esc(f.q ?? "")}" placeholder="ชื่อผู้ตรวจ / สาขา / ตำแหน่ง"></div>
+    <div class="fb-field fb-search"><label>ค้นหา</label><input type="text" name="q" value="${esc(f.q ?? "")}" placeholder="รหัส GC-xxxxx / ชื่อผู้ตรวจ / สาขา"></div>
     <div class="fb-field"><label>สาขา</label><select name="branch"><option value="">ทุกสาขา</option>${branchOpts}</select></div>
     <div class="fb-field"><label>ตั้งแต่วันที่</label><input type="date" name="from" value="${esc(f.from ?? "")}"></div>
     <div class="fb-field"><label>ถึงวันที่</label><input type="date" name="to" value="${esc(f.to ?? "")}"></div>
@@ -73,12 +73,12 @@ function resultLabel(r: any): string {
 }
 
 export function exportXlsx(rows: any[]): Uint8Array {
-  const header = ["สาขา", "วันที่ตรวจ", "ผู้ตรวจ", "ตำแหน่ง", "สถานะ", "คะแนน", "%", "ผลรวม", "รอบ", "ส่งเมื่อ", "ผู้ตรวจสอบ (HR)",
+  const header = ["รหัสการตรวจ", "สาขา", "วันที่ตรวจ", "ผู้ตรวจ", "ตำแหน่ง", "สถานะ", "คะแนน", "%", "ผลรวม", "รอบ", "ส่งเมื่อ", "ผู้ตรวจสอบ (HR)",
     "แผนแก้ไข: ปัญหาที่พบ", "แผนแก้ไข: แนวทางแก้ไข", "แผนแก้ไข: กำหนดเสร็จ", "แผนแก้ไข: สถานะกำหนด", ...CHECKLIST_ITEMS.map((i) => i.label)]
   const data = rows.map((r) => {
     const items = new Map(parseJsonbArray<any>(r.items).map((i) => [i.itemId, i]))
     return [
-      r.branch, fmtDateTH(r.inspect_date), r.inspector_name, positionOf(r), STATUS_LABEL[r.status] || r.status,
+      inspectionCode(r.id), r.branch, fmtDateTH(r.inspect_date), r.inspector_name, positionOf(r), STATUS_LABEL[r.status] || r.status,
       r.score != null ? `${r.score}/${CHECKLIST_TOTAL}` : "", r.percent ?? "", resultLabel(r), r.cycle,
       r.submitted_at ? fmtDateTimeTH(r.submitted_at) : "", r.hr_reviewer ?? "",
       r.plan_problem ?? "", r.plan_solution ?? "", r.plan_due_date ? fmtDateTH(r.plan_due_date) : "", dueLabel(planDueState(r)),
@@ -90,7 +90,7 @@ export function exportXlsx(rows: any[]): Uint8Array {
     ]
   })
   const ws = XLSX.utils.aoa_to_sheet([header, ...data])
-  ws["!cols"] = header.map((h, i) => ({ wch: i < 11 ? Math.max(10, h.length + 2) : i < 15 ? 22 : 18 }))
+  ws["!cols"] = header.map((h, i) => ({ wch: i < 12 ? Math.max(10, h.length + 2) : i < 16 ? 22 : 18 }))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, "Grooming")
   return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as Uint8Array
@@ -108,7 +108,7 @@ export function xlsxResponse(rows: any[], name: string): Response {
 /** Print-ready page; opens the browser print dialog so the user can "Save as PDF". */
 export function reportHtml(title: string, rows: any[], f: ListFilters): string {
   const filt = [f.status && f.status !== "all" ? `สถานะ: ${STATUS_LABEL[f.status] || f.status}` : "", f.branch ? `สาขา: ${f.branch}` : "", f.from ? `ตั้งแต่ ${fmtDateTH(f.from)}` : "", f.to ? `ถึง ${fmtDateTH(f.to)}` : "", f.q ? `ค้นหา: ${f.q}` : ""].filter(Boolean).join(" · ") || "ทุกรายการ"
-  const body = rows.map((r) => `<tr><td>${esc(r.branch)}</td><td>${fmtDateTH(r.inspect_date)}</td><td>${esc(r.inspector_name)}<br><small>${esc(positionOf(r))}</small></td><td>${esc(STATUS_LABEL[r.status] || r.status)}</td><td>${r.score != null ? `${r.score}/${CHECKLIST_TOTAL} (${r.percent}%)` : "-"}</td><td>${resultLabel(r)}</td><td>${r.submitted_at ? fmtDateTimeTH(r.submitted_at) : "-"}</td><td>${r.plan_due_date ? `${fmtDateTH(r.plan_due_date)}${planDueState(r) === "overdue" ? " ⚠ เกินกำหนด" : planDueState(r) === "soon" ? " ⏰ ใกล้กำหนด" : ""}<br><small>${esc(r.plan_solution ?? "")}</small>` : "-"}</td></tr>`).join("")
+  const body = rows.map((r) => `<tr><td>${inspectionCode(r.id)}</td><td>${esc(r.branch)}</td><td>${fmtDateTH(r.inspect_date)}</td><td>${esc(r.inspector_name)}<br><small>${esc(positionOf(r))}</small></td><td>${esc(STATUS_LABEL[r.status] || r.status)}</td><td>${r.score != null ? `${r.score}/${CHECKLIST_TOTAL} (${r.percent}%)` : "-"}</td><td>${resultLabel(r)}</td><td>${r.submitted_at ? fmtDateTimeTH(r.submitted_at) : "-"}</td><td>${r.plan_due_date ? `${fmtDateTH(r.plan_due_date)}${planDueState(r) === "overdue" ? " ⚠ เกินกำหนด" : planDueState(r) === "soon" ? " ⏰ ใกล้กำหนด" : ""}<br><small>${esc(r.plan_solution ?? "")}</small>` : "-"}</td></tr>`).join("")
   return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>${esc(title)}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap');
@@ -120,7 +120,7 @@ export function reportHtml(title: string, rows: any[], f: ListFilters): string {
 </style></head><body>
 <div class="noprint" style="margin-bottom:12px;"><button onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button></div>
 <h1>${esc(title)}</h1><p>${esc(filt)} · ${rows.length} รายการ · ออกรายงานเมื่อ ${fmtDateTimeTH(new Date())}</p>
-<table><thead><tr><th>สาขา</th><th>วันที่ตรวจ</th><th>ผู้ตรวจ</th><th>สถานะ</th><th>คะแนน</th><th>ผลรวม</th><th>ส่งเมื่อ</th><th>แผนแก้ไข (กำหนดเสร็จ)</th></tr></thead><tbody>${body || `<tr><td colspan="8">ไม่พบรายการ</td></tr>`}</tbody></table>
+<table><thead><tr><th>รหัส</th><th>สาขา</th><th>วันที่ตรวจ</th><th>ผู้ตรวจ</th><th>สถานะ</th><th>คะแนน</th><th>ผลรวม</th><th>ส่งเมื่อ</th><th>แผนแก้ไข (กำหนดเสร็จ)</th></tr></thead><tbody>${body || `<tr><td colspan="9">ไม่พบรายการ</td></tr>`}</tbody></table>
 <script>window.addEventListener('load', function() { setTimeout(function() { window.print(); }, 400); });</script>
 </body></html>`
 }

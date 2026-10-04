@@ -47,3 +47,12 @@ export const BRANCHES = [
   "IS-FI", "IS-KBI", "IS-KKC", "IS-PN", "IS-TA", "IS-TK", "IS-TM", "IS-TR",
   "US-PSU", "US-SR", "US-SRU", "US-SW", "US-SWOK", "US-UBRU", "US-WU", "US-WUH",
 ]
+
+/** "ง. แนบรูปรวมที่ตรวจวันนี้" — up to 5 overall photos per audit (README
+ * from Preeyapan, htask-1791123159751). Stored in inspection_photos under
+ * these pseudo item ids. */
+export const GROUP_PHOTO_SLOTS = ["group1", "group2", "group3", "group4", "group5"]
+
+export function isValidPhotoSlot(itemId: string): boolean {
+  return GROUP_PHOTO_SLOTS.includes(itemId) || CHECKLIST_ITEMS.some((i) => i.itemId === itemId)
+}

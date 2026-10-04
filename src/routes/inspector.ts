@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge } from "../ui/layout"
-import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, POSITIONS, BRANCHES } from "../lib/checklist"
-import { getByToken, listFiltered, listForExport, parseJsonbArray, openRevisionIds, purgeEmptyDrafts, dateOnly, planDueState, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, POSITIONS, BRANCHES, GROUP_PHOTO_SLOTS } from "../lib/checklist"
+import { getByToken, listFiltered, listForExport, parseJsonbArray, openRevisionIds, purgeEmptyDrafts, dateOnly, planDueState, inspectionCode, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
 import { planDueBadge } from "../ui/layout"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
@@ -19,6 +19,7 @@ app.get("/", async (c) => {
   const rowsHtml = rows.length
     ? rows.map((r: any) => `
         <tr class="clickable" onclick="window.location='/inspect/${r.public_token}'">
+          <td><b>${inspectionCode(r.id)}</b></td>
           <td>${esc(r.branch) || "-"}</td>
           <td>${statusBadge(r.status)}</td>
           <td>${esc(r.inspector_name) || "-"}<br><span style="color:#94a3b8;font-size:11.5px;">${esc(r.position === "อื่นๆ" ? r.position_other : r.position)}</span></td>
@@ -28,7 +29,7 @@ app.get("/", async (c) => {
           <td>${r.percent != null ? `${r.percent}%` : "-"}</td>
           <td>${r.status === "draft" ? `<button type="button" class="btn btn-danger btn-xs" onclick="event.stopPropagation();deleteDraft('${esc(r.public_token)}',this)">ลบฉบับร่าง</button>` : ""}</td>
         </tr>`).join("")
-    : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;">ไม่พบรายการตรวจ</td></tr>`
+    : `<tr><td colspan="9" style="text-align:center;color:#94a3b8;">ไม่พบรายการตรวจ</td></tr>`
 
   const body = `
     <div class="top-nav">
@@ -40,7 +41,7 @@ app.get("/", async (c) => {
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>%</th><th></th></tr></thead>
+          <thead><tr><th>รหัสการตรวจ</th><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>%</th><th></th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
@@ -125,13 +126,13 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
         </div>` : ""
       const beforePhoto = `
         <div class="photo-box" style="display:${result || hasBefore ? "block" : "none"};margin-top:8px;">
-          <div class="mini-label photo-label">${result === "fail" ? 'รูปสภาพที่ไม่ผ่าน (ใช้เป็นรูป Before)<span class="req">*</span>' : 'รูปหลักฐาน<span class="req">*</span>'}</div>
+          <div class="mini-label photo-label">${result === "fail" ? 'รูปสภาพที่ไม่ผ่าน (ใช้เป็นรูป Before)<span class="req">*</span>' : 'รูปประกอบ (ไม่บังคับ)'}</div>
           <div class="photo-row">
             ${itemEditable && !revisionMode ? `<label class="btn btn-ghost btn-sm">📷 ${hasBefore ? "ถ่ายใหม่" : "ถ่ายรูป"}<input type="file" accept="image/*" capture="environment" class="photo-input" data-kind="before" style="display:none;"></label>` : ""}
             <img class="photo-thumb before-thumb" src="${hasBefore ? photoUrl(def.itemId, "before") : ""}" style="display:${hasBefore ? "block" : "none"};" onclick="openLightbox(this.src)">
             <span class="photo-status" style="font-size:12px;color:#94a3b8;">${revisionMode ? (hasBefore ? "รูปก่อนแก้ไข (Before)" : "ไม่มีรูปก่อนแก้ไข") : hasBefore ? "แนบรูปแล้ว" : "ยังไม่มีรูป"}</span>
           </div>
-          <div class="errmsg photo-err">กรุณาแนบรูปถ่าย</div>
+          <div class="errmsg photo-err">ข้อที่ไม่ผ่านต้องแนบรูปสภาพที่ไม่ผ่าน</div>
         </div>`
       const afterBox = isRev ? `
         <div class="after-box">
@@ -182,7 +183,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     ${rejectBanner}
     <div class="card">
       <h1 style="margin:0 0 4px;">แบบตรวจ Grooming ${isNew ? '<span class="badge draft">ใหม่ (ยังไม่บันทึก)</span>' : statusBadge(status)}</h1>
-      <p class="sub">${isNew ? "ระบบจะบันทึกฉบับร่างให้อัตโนมัติเมื่อเริ่มกรอกข้อมูล" : `รอบตรวจที่ ${insp.cycle}`}</p>
+      <p class="sub">${isNew ? "ระบบจะบันทึกฉบับร่างให้อัตโนมัติเมื่อเริ่มกรอกข้อมูล" : `รหัสการตรวจ <b>${inspectionCode(insp.id)}</b> · รอบตรวจที่ ${insp.cycle}`}</p>
 
       <div class="field"><label>ชื่อผู้ตรวจ<span class="req">*</span></label><input type="text" id="f-name" value="${esc(insp?.inspector_name ?? "")}" ${dis}></div>
       <div class="field"><label>อีเมลผู้ตรวจ <span style="font-weight:400;color:#6b7a7a;">(ไม่บังคับ — สำหรับรับแจ้งเตือนเมื่อ HR ขอให้แก้ไข/อนุมัติ)</span></label><input type="text" inputmode="email" id="f-email" value="${esc(insp?.inspector_email ?? "")}" placeholder="name@uficon.com" ${dis}><div class="errmsg" id="email-err">รูปแบบอีเมลไม่ถูกต้อง</div></div>
@@ -204,6 +205,21 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progress-fill" style="width:0%;"></div></div>
       <p class="sub" style="margin-bottom:16px;">ตรวจแล้ว <b id="progress-count">0</b> / ${CHECKLIST_TOTAL} ข้อ · ผ่าน <b id="pass-count">0</b> · ไม่ผ่าน <b id="fail-count">0</b> · <b id="percent-count">0</b>% <span id="overall-badge"></span> <span style="color:#94a3b8;">(เกณฑ์: ผ่าน ≥ ${PASS_THRESHOLD_PERCENT}%)</span></p>
       ${checklistHtml}
+    </div>
+
+    <div class="card">
+      <h2>ง. แนบรูปรวมที่ตรวจวันนี้ <span style="font-weight:400;font-size:13px;color:#6b7a7a;">สูงสุด ${GROUP_PHOTO_SLOTS.length} รูป · ไม่บังคับ</span></h2>
+      <div class="group-grid">
+        ${GROUP_PHOTO_SLOTS.map((slot, i) => {
+          const has = photos.before.has(slot)
+          const canEdit = editable && !revisionMode
+          return `<div class="group-slot" data-slot="${slot}">
+            <img class="group-img" src="${has ? photoUrl(slot, "before") : ""}" style="display:${has ? "block" : "none"};" onclick="openLightbox(this.src)">
+            <div class="group-empty" style="display:${has ? "none" : "flex"};">รูปที่ ${i + 1}</div>
+            ${canEdit ? `<div class="group-actions"><label class="btn btn-ghost btn-xs">📷 ${has ? "เปลี่ยน" : "เพิ่มรูป"}<input type="file" accept="image/*" class="group-input" style="display:none;"></label><button type="button" class="btn btn-danger btn-xs group-del" style="display:${has ? "inline-block" : "none"};">ลบ</button></div>` : ""}
+          </div>`
+        }).join("")}
+      </div>
     </div>
 
     <div class="card plan-card">
@@ -288,8 +304,9 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     if (!a) return false;
     var result = a.getAttribute('data-result');
     if (result === 'fail' && (!el.querySelector('.note-input').value.trim() || !el.querySelector('.fix-input').value.trim())) return false;
-    // pass AND fail both need a photo (fail = photo of the failing condition)
-    if (!visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb'))) return false;
+    // Only failed items need a photo (photo of the failing condition) —
+    // passed items don't (README, htask-1791123159751).
+    if (result === 'fail' && !visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb'))) return false;
     if (el.getAttribute('data-rev') === '1') {
       if (!el.querySelector('.corrective-input').value.trim()) return false;
       if (!visible(el.querySelector('.after-thumb'))) return false;
@@ -316,9 +333,9 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     if (noteErr) noteErr.classList.toggle('show', result === 'fail' && !el.querySelector('.note-input').value.trim());
     var fixErr = el.querySelector('.fix-err');
     if (fixErr) fixErr.classList.toggle('show', result === 'fail' && !el.querySelector('.fix-input').value.trim());
-    if (photoErr) photoErr.classList.toggle('show', !!result && !REVISION_MODE && !visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb')));
+    if (photoErr) photoErr.classList.toggle('show', result === 'fail' && !REVISION_MODE && !visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb')));
     var pl = el.querySelector('.photo-label');
-    if (pl) pl.innerHTML = result === 'fail' ? 'รูปสภาพที่ไม่ผ่าน (ใช้เป็นรูป Before)<span class="req">*</span>' : 'รูปหลักฐาน<span class="req">*</span>';
+    if (pl) pl.innerHTML = result === 'fail' ? 'รูปสภาพที่ไม่ผ่าน (ใช้เป็นรูป Before)<span class="req">*</span>' : 'รูปประกอบ (ไม่บังคับ)';
     if (el.getAttribute('data-rev') === '1') {
       el.querySelector('.corrective-err').classList.toggle('show', !el.querySelector('.corrective-input').value.trim());
       el.querySelector('.after-err').classList.toggle('show', !visible(el.querySelector('.after-thumb')));
@@ -399,6 +416,34 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       updateSubmitState(); scheduleAutosave();
     });
     var posOther = $('f-position-other'); if (posOther && !posOther.disabled) posOther.addEventListener('input', function() { updateSubmitState(); scheduleAutosave(); });
+
+    // "ง. แนบรูปรวมที่ตรวจวันนี้" — up to 5 optional overall photos.
+    document.querySelectorAll('.group-slot').forEach(function(slotEl) {
+      var slot = slotEl.getAttribute('data-slot');
+      var input = slotEl.querySelector('.group-input');
+      var img = slotEl.querySelector('.group-img'), empty = slotEl.querySelector('.group-empty'), del = slotEl.querySelector('.group-del');
+      if (input) input.addEventListener('change', function() {
+        var file = input.files[0]; if (!file) return;
+        $('status-line').textContent = 'กำลังอัปโหลดรูปรวม...';
+        Promise.all([compressImage(file, 1280, 0.8), ensureToken()]).then(function(v) {
+          var fd = new FormData(); fd.append('photo', v[0], slot + '.jpg');
+          return fetch('/api/inspect/' + v[1] + '/photo/' + slot + '?kind=before', { method: 'POST', body: fd });
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          if (!d.ok) { $('status-line').textContent = 'เกิดข้อผิดพลาด: ' + (d.error || ''); return; }
+          img.src = '/api/inspect/' + TOKEN + '/photo/' + slot + '?kind=before&t=' + Date.now();
+          img.style.display = 'block'; empty.style.display = 'none'; if (del) del.style.display = 'inline-block';
+          $('status-line').textContent = 'แนบรูปรวมแล้ว';
+        }).catch(function() { $('status-line').textContent = 'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่'; });
+        input.value = '';
+      });
+      if (del) del.addEventListener('click', function() {
+        if (!TOKEN || !confirm('ลบรูปนี้?')) return;
+        fetch('/api/inspect/' + TOKEN + '/photo/' + slot + '/delete', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(d) {
+          if (d.ok) { img.style.display = 'none'; img.src = ''; empty.style.display = 'flex'; del.style.display = 'none'; }
+        });
+      });
+    });
+
 
     $('submit-btn').addEventListener('click', async function() {
       $('submit-btn').disabled = true;

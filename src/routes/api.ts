@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { createDraft, saveDraft, submitForReview, getByToken, getById, deleteDraft, isEmptyInput, openRevisionIds, parseJsonbArray, validationMessage, type InspectionInput } from "../lib/inspections"
-import { savePhoto, getPhoto, type PhotoKind } from "../lib/photos"
+import { savePhoto, getPhoto, deletePhoto, type PhotoKind } from "../lib/photos"
+import { isValidPhotoSlot, GROUP_PHOTO_SLOTS } from "../lib/checklist"
 import { notifyHrSubmitted } from "../lib/notify"
 
 const app = new Hono()
@@ -85,6 +86,7 @@ app.post("/inspect/:token/photo/:itemId", async (c) => {
   const token = c.req.param("token")
   const itemId = c.req.param("itemId")
   const kind = kindOf(c.req.query("kind"))
+  if (!isValidPhotoSlot(itemId)) return c.json({ error: "invalid_item" }, 400)
   const insp = await getByToken(token)
   if (!insp) return c.json({ error: "not_found" }, 404)
   if (insp.status !== "draft" && insp.status !== "rejected") return c.json({ error: "locked" }, 400)
@@ -101,6 +103,18 @@ app.post("/inspect/:token/photo/:itemId", async (c) => {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const result = await savePhoto(insp.id, itemId, file.type || "image/jpeg", bytes, kind)
   if (!result.ok) return c.json({ error: result.error }, 400)
+  return c.json({ ok: true })
+})
+
+// Remove one of the "ง. รูปรวม" group photos (draft / non-revision only).
+app.post("/inspect/:token/photo/:itemId/delete", async (c) => {
+  const itemId = c.req.param("itemId")
+  if (!GROUP_PHOTO_SLOTS.includes(itemId)) return c.json({ error: "invalid_item" }, 400)
+  const insp = await getByToken(c.req.param("token"))
+  if (!insp) return c.json({ error: "not_found" }, 404)
+  const open = insp.status === "rejected" ? openRevisionIds(parseJsonbArray(insp.items)) : []
+  if ((insp.status !== "draft" && insp.status !== "rejected") || open.length) return c.json({ error: "locked" }, 400)
+  await deletePhoto(insp.id, itemId, "before")
   return c.json({ ok: true })
 })
 

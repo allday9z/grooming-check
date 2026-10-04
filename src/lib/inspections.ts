@@ -225,7 +225,8 @@ export function validateForSubmit(input: InspectionInput, photos: { before: Set<
     if (item.result === "fail" && !item.note?.trim()) return `item_missing_note:${item.itemId}`
     if (item.result === "fail" && !photos.before.has(item.itemId) && !photos.after.has(item.itemId)) return `item_missing_fail_photo:${item.itemId}`
     if (item.result === "fail" && !item.fix?.trim()) return `item_missing_fix:${item.itemId}`
-    if (item.result === "pass" && !photos.before.has(item.itemId) && !photos.after.has(item.itemId)) return `item_missing_photo:${item.itemId}`
+    // Passed items no longer need a photo — only failed ones do (README
+    // from Preeyapan, htask-1791123159751: "ข้อที่ผ่านไม่ต้องแนบรูป").
     if (open.has(item.itemId)) {
       if (!item.corrective?.note?.trim()) return `item_missing_corrective_note:${item.itemId}`
       if (!photos.after.has(item.itemId)) return `item_missing_after_photo:${item.itemId}`
@@ -369,7 +370,10 @@ function filterWhere(f: ListFilters) {
   if (f.to && !isNaN(Date.parse(f.to))) conds.push(sql`inspect_date <= ${f.to}`)
   if (f.q?.trim()) {
     const like = `%${f.q.trim()}%`
-    conds.push(sql`(inspector_name ILIKE ${like} OR branch ILIKE ${like} OR position ILIKE ${like} OR COALESCE(position_other, '') ILIKE ${like})`)
+    const codeId = parseInspectionCode(f.q)
+    conds.push(codeId != null
+      ? sql`(id = ${codeId} OR inspector_name ILIKE ${like} OR branch ILIKE ${like})`
+      : sql`(inspector_name ILIKE ${like} OR branch ILIKE ${like} OR position ILIKE ${like} OR COALESCE(position_other, '') ILIKE ${like})`)
   }
   return conds.reduce((acc, c, i) => (i === 0 ? c : sql`${acc} AND ${c}`))
 }
@@ -448,4 +452,15 @@ export async function countPlanDue(): Promise<{ overdue: number; soon: number }>
   let overdue = 0, soon = 0
   for (const r of rows as any[]) { const st = planDueState(r); if (st === "overdue") overdue++; else if (st === "soon") soon++ }
   return { overdue, soon }
+}
+
+/** Human inspection code ("รหัสการตรวจ", README htask-1791123159751) —
+ * derived from the row id, so it's stable across revision rounds: GC-00012. */
+export function inspectionCode(id: number | null | undefined): string {
+  return id == null ? "-" : `GC-${String(id).padStart(5, "0")}`
+}
+/** Accepts "GC-00012", "gc12", "#12" … → 12, else null. */
+export function parseInspectionCode(q: string | null | undefined): number | null {
+  const m = String(q ?? "").trim().match(/^(?:gc-?|#)?0*(\d{1,9})$/i)
+  return m && /^(gc|#)/i.test(String(q).trim()) ? Number(m[1]) : null
 }

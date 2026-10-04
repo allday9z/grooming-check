@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge, planDueBadge } from "../ui/layout"
-import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL } from "../lib/checklist"
-import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, GROUP_PHOTO_SLOTS } from "../lib/checklist"
+import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, inspectionCode, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
 import { filtersFromQuery, filterBarHtml, paginationHtml, queryString, xlsxResponse, reportHtml, LIST_STYLES, buildSummary, summaryBodyHtml, summaryPrintHtml, summaryXlsx, SUMMARY_STYLES } from "../lib/report"
@@ -37,6 +37,7 @@ app.get("/", async (c) => {
   const rowsHtml = rows.length
     ? rows.map((r: any) => `
         <tr class="clickable${planDueState(r) === "overdue" ? " due-overdue" : planDueState(r) === "soon" ? " due-soon" : ""}" onclick="window.location='/hr/${r.id}'">
+          <td><b>${inspectionCode(r.id)}</b></td>
           <td>${esc(r.branch)}</td>
           <td>${statusBadge(r.status)}</td>
           <td>${esc(r.inspector_name)}</td>
@@ -47,7 +48,7 @@ app.get("/", async (c) => {
           <td>${fmtDateTimeTH(r.submitted_at)}</td>
           <td>${r.plan_due_date ? `${fmtDateTH(r.plan_due_date)} ${planDueBadge(planDueState(r))}` : "-"}</td>
         </tr>`).join("")
-    : `<tr><td colspan="9" style="text-align:center;color:#94a3b8;">ไม่พบรายการ</td></tr>`
+    : `<tr><td colspan="10" style="text-align:center;color:#94a3b8;">ไม่พบรายการ</td></tr>`
 
   const body = `
     <div class="top-nav">
@@ -66,7 +67,7 @@ app.get("/", async (c) => {
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>รอบ</th><th>ส่งเมื่อ</th><th>กำหนดเสร็จแผนแก้ไข</th></tr></thead>
+          <thead><tr><th>รหัสการตรวจ</th><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>รอบ</th><th>ส่งเมื่อ</th><th>กำหนดเสร็จแผนแก้ไข</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
@@ -206,7 +207,7 @@ app.get("/:id", async (c) => {
     <div class="top-nav"><a href="/hr">← แดชบอร์ด HR</a></div>
     <div class="card">
       <h1 style="margin:0 0 4px;">${esc(insp.branch)} ${statusBadge(insp.status)}</h1>
-      <p class="sub">Audit ID #${insp.id} · รอบตรวจที่ ${insp.cycle}</p>
+      <p class="sub">รหัสการตรวจ (Audit ID) <b>${inspectionCode(insp.id)}</b> · รอบตรวจที่ ${insp.cycle}</p>
       <table>
         <tr><td style="width:160px;color:#64748b;">ผู้ตรวจ</td><td>${esc(insp.inspector_name)} (${esc(insp.position === "อื่นๆ" ? insp.position_other : insp.position)})${insp.inspector_email ? ` · ${esc(insp.inspector_email)}` : ""}</td></tr>
         <tr><td style="color:#64748b;">วันที่ตรวจ</td><td>${fmtDateTH(insp.inspect_date)}</td></tr>
@@ -223,6 +224,12 @@ app.get("/:id", async (c) => {
     <div class="card">
       <h2>รายการตรวจทั้ง ${CHECKLIST_TOTAL} ข้อ ${reviewing ? `<span class="sub" style="font-weight:400;">· รอยืนยัน ${openCount} ข้อ</span>` : ""}</h2>
       ${checklistHtml}
+    </div>
+    <div class="card">
+      <h2>ง. รูปรวมที่ตรวจวันนี้</h2>
+      ${GROUP_PHOTO_SLOTS.some((s) => photos.before.has(s))
+        ? `<div class="group-grid">${GROUP_PHOTO_SLOTS.filter((s) => photos.before.has(s)).map((s) => `<div class="group-slot"><img class="group-img" src="${photoUrl(s, "before")}" onclick="openLightbox(this.src)"></div>`).join("")}</div>`
+        : `<p class="sub" style="margin:0;">ไม่ได้แนบรูปรวม</p>`}
     </div>
     <div class="card plan-card">
       <h2>แผนการแก้ไข ${planDueBadge(planDueState(insp))}</h2>

@@ -9,6 +9,7 @@
 import nodemailer from "nodemailer"
 import { CHECKLIST_ITEMS } from "./checklist"
 import { fmtDateTH } from "./format"
+import { inspectionCode } from "./inspections"
 
 const APP_ORIGIN = process.env.APP_ORIGIN ?? "https://grooming-check.coolify.pve01.prod.uficon.com"
 const HR_EMAILS = (process.env.HR_NOTIFY_EMAILS ?? "").split(/[,;\s]+/).filter(Boolean)
@@ -57,13 +58,14 @@ export function notifyHrSubmitted(insp: any, resubmittedItems: string[]): void {
   const body = `
     <p>${resub ? "ผู้ตรวจส่งการแก้ไข (Corrective action submitted) กลับมาแล้ว" : "มีรายการตรวจ Grooming ใหม่รอ HR ตรวจสอบ"}</p>
     <table style="font-size:14px;">
+      <tr><td style="color:#6b7a7a;padding-right:12px;">รหัสการตรวจ</td><td><b>${inspectionCode(insp.id)}</b></td></tr>
       <tr><td style="color:#6b7a7a;padding-right:12px;">สาขา</td><td><b>${esc(insp.branch)}</b></td></tr>
       <tr><td style="color:#6b7a7a;padding-right:12px;">ผู้ตรวจ</td><td>${esc(insp.inspector_name)}</td></tr>
       <tr><td style="color:#6b7a7a;padding-right:12px;">วันที่ตรวจ</td><td>${fmtDateTH(insp.inspect_date)}</td></tr>
       <tr><td style="color:#6b7a7a;padding-right:12px;">คะแนน</td><td>${insp.score ?? "-"}/${CHECKLIST_ITEMS.length} (${insp.percent ?? "-"}%)</td></tr>
     </table>
     ${resub ? `<p style="margin-top:12px;">ข้อที่แก้ไข: ${resubmittedItems.map((id) => esc(label(id))).join(", ")}</p>` : ""}`
-  void send(HR_EMAILS, `[Grooming] ${resub ? "ส่งการแก้ไขกลับมา" : "รายการตรวจใหม่"} — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell(resub ? "ส่งการแก้ไขกลับมาแล้ว" : "รายการตรวจใหม่รอตรวจสอบ", body, `${APP_ORIGIN}/hr/${insp.id}`, "เปิดดูใน HR Dashboard"))
+  void send(HR_EMAILS, `[Grooming] ${inspectionCode(insp.id)} ${resub ? "ส่งการแก้ไขกลับมา" : "รายการตรวจใหม่"} — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell(resub ? "ส่งการแก้ไขกลับมาแล้ว" : "รายการตรวจใหม่รอตรวจสอบ", body, `${APP_ORIGIN}/hr/${insp.id}`, "เปิดดูใน HR Dashboard"))
 }
 
 export function notifyInspectorReviewed(insp: any, status: "approved" | "rejected", revisions: { itemId: string; comment: string }[], reviewer: string, overallComment: string | null): void {
@@ -71,12 +73,12 @@ export function notifyInspectorReviewed(insp: any, status: "approved" | "rejecte
   const link = `${APP_ORIGIN}/inspect/${insp.public_token}`
   if (status === "approved") {
     const body = `<p>รายการตรวจสาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} ได้รับการยืนยันจาก HR (${esc(reviewer)}) แล้ว</p>${overallComment ? `<p>หมายเหตุ: ${esc(overallComment)}</p>` : ""}`
-    void send([insp.inspector_email], `[Grooming] อนุมัติแล้ว — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("รายการตรวจได้รับการอนุมัติ", body, link, "เปิดดูรายการตรวจ"))
+    void send([insp.inspector_email], `[Grooming] ${inspectionCode(insp.id)} อนุมัติแล้ว — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("รายการตรวจได้รับการอนุมัติ", body, link, "เปิดดูรายการตรวจ"))
     return
   }
   const list = revisions.map((r) => `<li><b>${esc(label(r.itemId))}</b><br><span style="color:#9c4a03;">${esc(r.comment)}</span></li>`).join("")
-  const body = `<p>HR (${esc(reviewer)}) ขอให้แก้ไขรายการตรวจสาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} จำนวน ${revisions.length} ข้อ:</p>
+  const body = `<p>HR (${esc(reviewer)}) ขอให้แก้ไขรายการตรวจรหัส <b>${inspectionCode(insp.id)}</b> สาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} จำนวน ${revisions.length} ข้อ:</p>
     <ul>${list}</ul>${overallComment ? `<p>หมายเหตุเพิ่มเติม: ${esc(overallComment)}</p>` : ""}
     <p>กรุณาแก้ไขเฉพาะข้อที่ระบุ แนบรูปหลังแก้ไข (After) และระบุการแก้ไข แล้วกดส่งกลับ</p>`
-  void send([insp.inspector_email], `[Grooming] ขอให้แก้ไข ${revisions.length} ข้อ — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("HR ขอให้แก้ไขรายการตรวจ", body, link, "เปิดแก้ไขรายการตรวจ"))
+  void send([insp.inspector_email], `[Grooming] ${inspectionCode(insp.id)} ขอให้แก้ไข ${revisions.length} ข้อ — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("HR ขอให้แก้ไขรายการตรวจ", body, link, "เปิดแก้ไขรายการตรวจ"))
 }
