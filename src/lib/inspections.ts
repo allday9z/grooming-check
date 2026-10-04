@@ -56,6 +56,8 @@ export interface ChecklistItemInput {
   itemId: string
   result: "pass" | "fail" | null
   note: string | null
+  /** How the failed condition will be / was fixed (htask-1791121739323 #15.1). */
+  fix?: string | null
   /** Set by HR: this item must be fixed by the inspector. */
   revision?: RevisionRequest | null
   /** Set by HR: item accepted and closed — never editable again. */
@@ -72,6 +74,10 @@ export interface InspectionInput {
   branch: string
   inspectDate: string
   items: ChecklistItemInput[]
+  /** Optional corrective plan (htask-1791121739323 #15.2). */
+  planProblem?: string | null
+  planSolution?: string | null
+  planDueDate?: string | null
 }
 
 export interface HistoryEntry {
@@ -102,6 +108,7 @@ function normalizeItems(items: ChecklistItemInput[], existing: ChecklistItemInpu
       itemId: def.itemId,
       result: found?.result === "pass" || found?.result === "fail" ? found.result : null,
       note: found?.note?.trim() || null,
+      fix: found?.fix?.trim() || null,
       revision: old?.revision ?? null,
       confirmed: !!old?.confirmed,
       corrective: correctiveNote ? { note: correctiveNote, at: old?.corrective?.at ?? null } : null,
@@ -128,12 +135,17 @@ function mergeForRevision(stored: any, input: InspectionInput): InspectionInput 
     positionOther: stored.position_other,
     branch: stored.branch,
     inspectDate: dateOnly(stored.inspect_date),
+    // The corrective plan stays editable during a revision round — it's the
+    // inspector's follow-up plan, not one of HR's confirmed checklist items.
+    planProblem: input.planProblem ?? null,
+    planSolution: input.planSolution ?? null,
+    planDueDate: input.planDueDate ?? null,
     items: storedItems.map((it) => (open.has(it.itemId) && incoming.has(it.itemId) ? { ...it, ...pickInspectorFields(incoming.get(it.itemId)!) } : it)),
   }
 }
 
 function pickInspectorFields(i: ChecklistItemInput): Partial<ChecklistItemInput> {
-  return { result: i.result, note: i.note, corrective: i.corrective ?? null }
+  return { result: i.result, note: i.note, fix: i.fix ?? null, corrective: i.corrective ?? null }
 }
 
 export function dateOnly(d: any): string {
@@ -160,8 +172,9 @@ export async function createDraft(input: InspectionInput, actorName: string): Pr
   const token = genToken()
   const history: HistoryEntry[] = [{ action: "created", by: actorName, at: new Date().toISOString(), cycle: 1, comment: null }]
   const rows = await sql`
-    INSERT INTO inspections (public_token, inspector_name, inspector_email, position, position_other, branch, inspect_date, items, status, cycle, history)
-    VALUES (${token}, ${input.inspectorName}, ${input.inspectorEmail}, ${input.position}, ${input.positionOther}, ${input.branch}, ${input.inspectDate || new Date().toISOString().slice(0, 10)}, ${JSON.stringify(items)}, 'draft', 1, ${JSON.stringify(history)})
+    INSERT INTO inspections (public_token, inspector_name, inspector_email, position, position_other, branch, inspect_date, items, status, cycle, history, plan_problem, plan_solution, plan_due_date)
+    VALUES (${token}, ${input.inspectorName}, ${input.inspectorEmail}, ${input.position}, ${input.positionOther}, ${input.branch}, ${input.inspectDate || new Date().toISOString().slice(0, 10)}, ${JSON.stringify(items)}, 'draft', 1, ${JSON.stringify(history)},
+      ${input.planProblem || null}, ${input.planSolution || null}, ${input.planDueDate || null})
     RETURNING id
   `
   return { id: rows[0].id as number, token }
@@ -181,7 +194,8 @@ export async function saveDraft(token: string, input: InspectionInput): Promise<
     UPDATE inspections SET
       inspector_name = ${effective.inspectorName}, inspector_email = ${effective.inspectorEmail}, position = ${effective.position},
       position_other = ${effective.positionOther}, branch = ${effective.branch}, inspect_date = ${effective.inspectDate || dateOnly(insp.inspect_date)},
-      items = ${JSON.stringify(items)}, updated_at = NOW()
+      items = ${JSON.stringify(items)}, plan_problem = ${effective.planProblem || null}, plan_solution = ${effective.planSolution || null},
+      plan_due_date = ${effective.planDueDate && !isNaN(Date.parse(effective.planDueDate)) ? effective.planDueDate : null}, updated_at = NOW()
     WHERE id = ${insp.id}
   `
 }
@@ -201,11 +215,16 @@ export function validateForSubmit(input: InspectionInput, photos: { before: Set<
   if (!input.branch?.trim()) return "missing_branch"
   if (!input.inspectDate?.trim() || isNaN(Date.parse(input.inspectDate))) return "missing_date"
   if (input.inspectorEmail && !EMAIL_RE.test(input.inspectorEmail)) return "invalid_email"
+  if (input.planDueDate && isNaN(Date.parse(input.planDueDate))) return "invalid_plan_due_date"
 
   const open = new Set(openRevisions)
   for (const item of input.items) {
     if (item.result !== "pass" && item.result !== "fail") return `item_not_checked:${item.itemId}`
+    // Fail = note + its own photo of the failing condition (kept as the
+    // "Before" photo) + fix method — all three (htask-1791121739323 #15.1).
     if (item.result === "fail" && !item.note?.trim()) return `item_missing_note:${item.itemId}`
+    if (item.result === "fail" && !photos.before.has(item.itemId) && !photos.after.has(item.itemId)) return `item_missing_fail_photo:${item.itemId}`
+    if (item.result === "fail" && !item.fix?.trim()) return `item_missing_fix:${item.itemId}`
     if (item.result === "pass" && !photos.before.has(item.itemId) && !photos.after.has(item.itemId)) return `item_missing_photo:${item.itemId}`
     if (open.has(item.itemId)) {
       if (!item.corrective?.note?.trim()) return `item_missing_corrective_note:${item.itemId}`
@@ -228,6 +247,9 @@ export function validationMessage(code: string): string {
     invalid_email: "รูปแบบอีเมลไม่ถูกต้อง",
     item_not_checked: `ยังไม่ได้ตรวจข้อ "${label}"`,
     item_missing_note: `ข้อ "${label}" ไม่ผ่าน ต้องระบุหมายเหตุ`,
+    item_missing_fail_photo: `ข้อ "${label}" ไม่ผ่าน ต้องแนบรูปสภาพที่ไม่ผ่าน`,
+    item_missing_fix: `ข้อ "${label}" ไม่ผ่าน ต้องระบุวิธีแก้ไข`,
+    invalid_plan_due_date: "กำหนดเสร็จของแผนการแก้ไขไม่ถูกต้อง",
     item_missing_photo: `ข้อ "${label}" ผ่าน ต้องแนบรูป`,
     item_missing_corrective_note: `ข้อ "${label}" ต้องระบุการแก้ไข (Corrective action)`,
     item_missing_after_photo: `ข้อ "${label}" ต้องแนบรูปหลังแก้ไข (After)`,
@@ -262,6 +284,7 @@ export async function submitForReview(token: string, rawInput: InspectionInput, 
     UPDATE inspections SET
       inspector_name = ${input.inspectorName}, inspector_email = ${input.inspectorEmail}, position = ${input.position}, position_other = ${input.positionOther},
       branch = ${input.branch}, inspect_date = ${input.inspectDate}, items = ${JSON.stringify(items)},
+      plan_problem = ${input.planProblem || null}, plan_solution = ${input.planSolution || null}, plan_due_date = ${input.planDueDate || null},
       status = 'pending', score = ${score}, percent = ${percent}, overall_result = ${overallResult},
       submitted_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW()
     WHERE id = ${insp.id}
@@ -402,4 +425,27 @@ export async function purgeEmptyDrafts(): Promise<number> {
     RETURNING i.id
   `
   return rows.length
+}
+
+/** Corrective-plan deadline state (htask-1791121739323 #15.2): "overdue"
+ * once the due date has passed, "soon" within PLAN_DUE_SOON_DAYS, while the
+ * audit isn't approved yet — an approved audit means HR has accepted the
+ * outcome, so its plan no longer nags. Dates compared in Bangkok time. */
+export const PLAN_DUE_SOON_DAYS = 3
+export function planDueState(row: { plan_due_date?: any; status?: string }): "overdue" | "soon" | "ok" | null {
+  if (!row.plan_due_date) return null
+  if (row.status === "approved") return "ok"
+  const due = dateOnly(row.plan_due_date)
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date())
+  if (due < today) return "overdue"
+  const diffDays = (Date.parse(due) - Date.parse(today)) / 86400000
+  return diffDays <= PLAN_DUE_SOON_DAYS ? "soon" : "ok"
+}
+
+/** Not-yet-approved audits whose corrective plan is overdue / due soon. */
+export async function countPlanDue(): Promise<{ overdue: number; soon: number }> {
+  const rows = await sql`SELECT plan_due_date, status FROM inspections WHERE deleted_at IS NULL AND status <> 'approved' AND plan_due_date IS NOT NULL`
+  let overdue = 0, soon = 0
+  for (const r of rows as any[]) { const st = planDueState(r); if (st === "overdue") overdue++; else if (st === "soon") soon++ }
+  return { overdue, soon }
 }

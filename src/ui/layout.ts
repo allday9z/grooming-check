@@ -91,6 +91,12 @@ export function renderPage(opts: { title: string; body: string; styles?: string;
   .rev-comment-box { margin-top:6px; }
   .rev-comment-box textarea { width:100%; padding:9px 10px; border:1.5px solid #f0b35c; border-radius:8px; font-family:inherit; font-size:14px; }
   .review-card { border:2px solid var(--brand); }
+  .mini-label { display:block; font-size:12.5px; font-weight:600; color: var(--muted); margin-bottom:4px; }
+  .note-box textarea { width:100%; padding:9px 10px; border:1.5px solid var(--border); border-radius:8px; font-family:inherit; font-size:14px; }
+  .plan-card { border-left:4px solid #d97706; }
+  .fix-line { font-size:13px; color:#1f5f3a; margin:4px 0 0; }
+  tr.due-overdue td { background:#fdf1f1; }
+  tr.due-soon td { background:#fff8ec; }
   ${opts.styles ?? ""}
   @media (max-width: 640px) {
     .field input[type=text], .field select { font-size:16px; }
@@ -123,4 +129,11 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export function statusBadge(status: string): string {
   return `<span class="badge ${status}">${STATUS_LABEL[status] || status}</span>`
+}
+
+/** Corrective-plan deadline badge (htask-1791121739323 #15.2). */
+export function planDueBadge(state: "overdue" | "soon" | "ok" | null): string {
+  if (state === "overdue") return `<span class="badge rejected">⚠ เกินกำหนดแผนแก้ไข</span>`
+  if (state === "soon") return `<span class="badge pending">⏰ ใกล้ครบกำหนดแผนแก้ไข</span>`
+  return ""
 }

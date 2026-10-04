@@ -1,7 +1,8 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, POSITIONS, BRANCHES } from "../lib/checklist"
-import { getByToken, listFiltered, listForExport, parseJsonbArray, openRevisionIds, purgeEmptyDrafts, dateOnly, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { getByToken, listFiltered, listForExport, parseJsonbArray, openRevisionIds, purgeEmptyDrafts, dateOnly, planDueState, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { planDueBadge } from "../ui/layout"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
 import { filtersFromQuery, filterBarHtml, paginationHtml, xlsxResponse, reportHtml, LIST_STYLES } from "../lib/report"
@@ -123,13 +124,14 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
           <div class="rev-by">โดย ${esc(cur.revision.by)} · ${fmtDateTimeTH(cur.revision.at)}</div>
         </div>` : ""
       const beforePhoto = `
-        <div class="photo-box" style="display:${result === "pass" || hasBefore ? "block" : "none"};margin-top:8px;">
+        <div class="photo-box" style="display:${result || hasBefore ? "block" : "none"};margin-top:8px;">
+          <div class="mini-label photo-label">${result === "fail" ? 'รูปสภาพที่ไม่ผ่าน (ใช้เป็นรูป Before)<span class="req">*</span>' : 'รูปหลักฐาน<span class="req">*</span>'}</div>
           <div class="photo-row">
             ${itemEditable && !revisionMode ? `<label class="btn btn-ghost btn-sm">📷 ${hasBefore ? "ถ่ายใหม่" : "ถ่ายรูป"}<input type="file" accept="image/*" capture="environment" class="photo-input" data-kind="before" style="display:none;"></label>` : ""}
             <img class="photo-thumb before-thumb" src="${hasBefore ? photoUrl(def.itemId, "before") : ""}" style="display:${hasBefore ? "block" : "none"};" onclick="openLightbox(this.src)">
             <span class="photo-status" style="font-size:12px;color:#94a3b8;">${revisionMode ? (hasBefore ? "รูปก่อนแก้ไข (Before)" : "ไม่มีรูปก่อนแก้ไข") : hasBefore ? "แนบรูปแล้ว" : "ยังไม่มีรูป"}</span>
           </div>
-          <div class="errmsg photo-err">กรุณาแนบรูปถ่ายเป็นหลักฐาน</div>
+          <div class="errmsg photo-err">กรุณาแนบรูปถ่าย</div>
         </div>`
       const afterBox = isRev ? `
         <div class="after-box">
@@ -159,8 +161,12 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
           <button type="button" class="check-opt-btn fail${result === "fail" ? " active" : ""}" data-result="fail" ${itemEditable ? "" : "disabled"}>❌ ไม่ผ่าน</button>
         </div>
         <div class="note-box" style="display:${result === "fail" ? "block" : "none"};margin-top:8px;">
+          <label class="mini-label">หมายเหตุ (สิ่งที่ไม่ผ่าน)<span class="req">*</span></label>
           <textarea class="note-input" rows="2" placeholder="ระบุหมายเหตุ (บังคับ)" ${itemEditable ? "" : "disabled"}>${esc(note)}</textarea>
           <div class="errmsg note-err">กรุณาระบุหมายเหตุ</div>
+          <label class="mini-label" style="margin-top:8px;">วิธีแก้ไข<span class="req">*</span></label>
+          <textarea class="fix-input" rows="2" placeholder="ระบุวิธีแก้ไข (บังคับ)" ${itemEditable ? "" : "disabled"}>${esc(cur?.fix ?? "")}</textarea>
+          <div class="errmsg fix-err">กรุณาระบุวิธีแก้ไข</div>
         </div>
         ${beforePhoto}
         ${afterBox}
@@ -200,6 +206,13 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       ${checklistHtml}
     </div>
 
+    <div class="card plan-card">
+      <h2>แผนการแก้ไข (ถ้ามี) <span style="font-weight:400;font-size:13px;color:#6b7a7a;">ไม่บังคับกรอก</span> ${insp ? planDueBadge(planDueState(insp)) : ""}</h2>
+      <div class="field"><label>ปัญหาที่พบ</label><textarea id="f-plan-problem" rows="2" ${editable ? "" : "disabled"}>${esc(insp?.plan_problem ?? "")}</textarea></div>
+      <div class="field"><label>แนวทางแก้ไข (ข้อความสั้น)</label><input type="text" id="f-plan-solution" maxlength="300" value="${esc(insp?.plan_solution ?? "")}" ${editable ? "" : "disabled"}></div>
+      <div class="field" style="max-width:260px;"><label>กำหนดเสร็จ (Due Date)</label><input type="date" id="f-plan-due" value="${insp?.plan_due_date ? dateOnly(insp.plan_due_date) : ""}" ${editable ? "" : "disabled"}></div>
+    </div>
+
     ${editable ? `
     <button type="button" class="btn" id="submit-btn" style="width:100%;" disabled>${revisionMode ? "ส่งการแก้ไขกลับให้ HR (Corrective action submitted)" : "ส่งให้ HR ตรวจสอบ"}</button>
     <p class="errmsg" id="submit-hint" style="text-align:center;margin-top:8px;">${revisionMode ? "กรุณาระบุการแก้ไขและแนบรูปหลังแก้ไขให้ครบทุกข้อที่ถูกขอแก้" : "กรุณากรอกข้อมูลและตรวจให้ครบทุกข้อก่อนส่ง"}</p>
@@ -222,7 +235,8 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       var activeBtn = el.querySelector('.check-opt-btn.active');
       var noteInput = el.querySelector('.note-input');
       var corr = el.querySelector('.corrective-input');
-      return { itemId: el.getAttribute('data-item'), result: activeBtn ? activeBtn.getAttribute('data-result') : null, note: noteInput ? noteInput.value : '', correctiveNote: corr ? corr.value : '' };
+      var fixInput = el.querySelector('.fix-input');
+      return { itemId: el.getAttribute('data-item'), result: activeBtn ? activeBtn.getAttribute('data-result') : null, note: noteInput ? noteInput.value : '', fix: fixInput ? fixInput.value : '', correctiveNote: corr ? corr.value : '' };
     });
     return {
       inspectorName: $('f-name').value.trim(),
@@ -231,6 +245,9 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       positionOther: $('f-position').value === 'อื่นๆ' ? $('f-position-other').value.trim() : null,
       branch: $('f-branch').value,
       inspectDate: $('f-date').value,
+      planProblem: $('f-plan-problem').value.trim(),
+      planSolution: $('f-plan-solution').value.trim(),
+      planDueDate: $('f-plan-due').value,
       items: items,
     };
   }
@@ -270,8 +287,9 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     var a = el.querySelector('.check-opt-btn.active');
     if (!a) return false;
     var result = a.getAttribute('data-result');
-    if (result === 'fail' && !el.querySelector('.note-input').value.trim()) return false;
-    if (result === 'pass' && !visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb'))) return false;
+    if (result === 'fail' && (!el.querySelector('.note-input').value.trim() || !el.querySelector('.fix-input').value.trim())) return false;
+    // pass AND fail both need a photo (fail = photo of the failing condition)
+    if (!visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb'))) return false;
     if (el.getAttribute('data-rev') === '1') {
       if (!el.querySelector('.corrective-input').value.trim()) return false;
       if (!visible(el.querySelector('.after-thumb'))) return false;
@@ -296,7 +314,11 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     var result = a ? a.getAttribute('data-result') : null;
     var noteErr = el.querySelector('.note-err'), photoErr = el.querySelector('.photo-err');
     if (noteErr) noteErr.classList.toggle('show', result === 'fail' && !el.querySelector('.note-input').value.trim());
-    if (photoErr) photoErr.classList.toggle('show', result === 'pass' && !REVISION_MODE && !visible(el.querySelector('.before-thumb')));
+    var fixErr = el.querySelector('.fix-err');
+    if (fixErr) fixErr.classList.toggle('show', result === 'fail' && !el.querySelector('.fix-input').value.trim());
+    if (photoErr) photoErr.classList.toggle('show', !!result && !REVISION_MODE && !visible(el.querySelector('.before-thumb')) && !visible(el.querySelector('.after-thumb')));
+    var pl = el.querySelector('.photo-label');
+    if (pl) pl.innerHTML = result === 'fail' ? 'รูปสภาพที่ไม่ผ่าน (ใช้เป็นรูป Before)<span class="req">*</span>' : 'รูปหลักฐาน<span class="req">*</span>';
     if (el.getAttribute('data-rev') === '1') {
       el.querySelector('.corrective-err').classList.toggle('show', !el.querySelector('.corrective-input').value.trim());
       el.querySelector('.after-err').classList.toggle('show', !visible(el.querySelector('.after-thumb')));
@@ -309,7 +331,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function() {
       var st = collectState();
-      if (!TOKEN && !st.inspectorName && !st.branch && !st.position && !st.items.some(function(i) { return i.result || i.note; })) return;
+      if (!TOKEN && !st.inspectorName && !st.branch && !st.position && !st.planProblem && !st.planSolution && !st.items.some(function(i) { return i.result || i.note; })) return;
       ensureToken().then(function(t) {
         return fetch('/api/inspect/' + t + '/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectState()) });
       }).then(function(res) { if (res && res.ok) $('status-line').textContent = 'บันทึกร่างอัตโนมัติแล้ว'; }).catch(function() {});
@@ -328,11 +350,11 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
           el.classList.add(result === 'pass' ? 'done-pass' : 'done-fail');
           el.querySelector('.note-box').style.display = result === 'fail' ? 'block' : 'none';
           var pb = el.querySelector('.photo-box');
-          if (pb && !REVISION_MODE) pb.style.display = result === 'pass' ? 'block' : 'none';
+          if (pb && !REVISION_MODE) pb.style.display = 'block';
           checkItemErrors(el); updateProgress(); updateSubmitState(); scheduleAutosave();
         });
       });
-      ['.note-input', '.corrective-input'].forEach(function(sel) {
+      ['.note-input', '.fix-input', '.corrective-input'].forEach(function(sel) {
         var inp = el.querySelector(sel);
         if (inp && !inp.disabled) inp.addEventListener('input', function() { checkItemErrors(el); updateSubmitState(); scheduleAutosave(); });
       });
@@ -367,7 +389,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       });
     });
 
-    ['f-name', 'f-email', 'f-branch', 'f-date'].forEach(function(id) {
+    ['f-name', 'f-email', 'f-branch', 'f-date', 'f-plan-problem', 'f-plan-solution', 'f-plan-due'].forEach(function(id) {
       var e = $(id); if (!e || e.disabled) return;
       e.addEventListener('input', function() { updateSubmitState(); scheduleAutosave(); });
       e.addEventListener('change', function() { updateSubmitState(); scheduleAutosave(); });

@@ -67,5 +67,10 @@ export async function initDB() {
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_inspection_photos_item_kind ON inspection_photos(inspection_id, item_id, kind)`
   await sql`ALTER TABLE inspections ADD COLUMN IF NOT EXISTS inspector_email TEXT`
   await sql`CREATE INDEX IF NOT EXISTS idx_inspections_inspect_date ON inspections(inspect_date)`
+  // v3 (htask-1791121739323 #15.2): optional corrective plan at the end of
+  // the form — problem found, solution (short), due date.
+  await sql`ALTER TABLE inspections ADD COLUMN IF NOT EXISTS plan_problem TEXT`
+  await sql`ALTER TABLE inspections ADD COLUMN IF NOT EXISTS plan_solution TEXT`
+  await sql`ALTER TABLE inspections ADD COLUMN IF NOT EXISTS plan_due_date DATE`
   console.log("[db] schema ready")
 }

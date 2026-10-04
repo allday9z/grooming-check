@@ -1,10 +1,11 @@
 import { Hono } from "hono"
-import { renderPage, esc, statusBadge } from "../ui/layout"
+import { renderPage, esc, statusBadge, planDueBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL } from "../lib/checklist"
-import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
-import { filtersFromQuery, filterBarHtml, paginationHtml, queryString, xlsxResponse, reportHtml, LIST_STYLES } from "../lib/report"
+import { filtersFromQuery, filterBarHtml, paginationHtml, queryString, xlsxResponse, reportHtml, LIST_STYLES, buildSummary, summaryBodyHtml, summaryPrintHtml, summaryXlsx, SUMMARY_STYLES } from "../lib/report"
+import { BRANCHES } from "../lib/checklist"
 import { notifyInspectorReviewed } from "../lib/notify"
 
 const app = new Hono()
@@ -22,6 +23,7 @@ app.get("/", async (c) => {
   const f = filtersFromQuery((k) => c.req.query(k))
   if (!f.status) f.status = "pending"
   const counts = await countByStatus()
+  const due = await countPlanDue()
   const { rows, total, page, pages } = await listFiltered({ ...f, excludeDrafts: true }, f.page)
 
   const tabs = [
@@ -34,7 +36,7 @@ app.get("/", async (c) => {
 
   const rowsHtml = rows.length
     ? rows.map((r: any) => `
-        <tr class="clickable" onclick="window.location='/hr/${r.id}'">
+        <tr class="clickable${planDueState(r) === "overdue" ? " due-overdue" : planDueState(r) === "soon" ? " due-soon" : ""}" onclick="window.location='/hr/${r.id}'">
           <td>${esc(r.branch)}</td>
           <td>${statusBadge(r.status)}</td>
           <td>${esc(r.inspector_name)}</td>
@@ -43,25 +45,28 @@ app.get("/", async (c) => {
           <td>${r.overall_result === "pass" ? '<span class="badge approved">ผ่าน</span>' : r.overall_result === "fail" ? '<span class="badge rejected">ไม่ผ่าน</span>' : "-"}</td>
           <td>${r.cycle}</td>
           <td>${fmtDateTimeTH(r.submitted_at)}</td>
+          <td>${r.plan_due_date ? `${fmtDateTH(r.plan_due_date)} ${planDueBadge(planDueState(r))}` : "-"}</td>
         </tr>`).join("")
-    : `<tr><td colspan="8" style="text-align:center;color:#94a3b8;">ไม่พบรายการ</td></tr>`
+    : `<tr><td colspan="9" style="text-align:center;color:#94a3b8;">ไม่พบรายการ</td></tr>`
 
   const body = `
     <div class="top-nav">
       <h1 style="margin:0;">แดชบอร์ด HR — ตรวจ Grooming</h1>
-      <a href="/inspect">← กลับหน้าผู้ตรวจ</a>
+      <span style="display:flex;gap:12px;flex-wrap:wrap;"><a href="/hr/summary">รายงานสรุปผลตรวจ →</a><a href="/inspect">← กลับหน้าผู้ตรวจ</a></span>
     </div>
     <div class="stat-grid">
       <div class="stat-box"><div class="num">${counts.pending}</div><div class="label">รอตรวจสอบ</div></div>
       <div class="stat-box"><div class="num">${counts.rejected}</div><div class="label">รอผู้ตรวจแก้ไข</div></div>
       <div class="stat-box"><div class="num">${counts.approved}</div><div class="label">อนุมัติแล้ว</div></div>
+      <div class="stat-box"${due.overdue ? ' style="border-color:#f0a8a8;background:#fdf5f5;"' : ""}><div class="num" style="color:${due.overdue ? "#c22b2b" : "inherit"};">${due.overdue}</div><div class="label">แผนแก้ไขเกินกำหนด</div></div>
+      <div class="stat-box"${due.soon ? ' style="border-color:#f5c98a;background:#fffaf2;"' : ""}><div class="num" style="color:${due.soon ? "#b45309" : "inherit"};">${due.soon}</div><div class="label">ใกล้ครบกำหนด (≤ 3 วัน)</div></div>
     </div>
     <div class="tabs">${tabsHtml}</div>
     ${filterBarHtml("/hr", f, { keepStatus: true })}
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>รอบ</th><th>ส่งเมื่อ</th></tr></thead>
+          <thead><tr><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>รอบ</th><th>ส่งเมื่อ</th><th>กำหนดเสร็จแผนแก้ไข</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
@@ -78,6 +83,49 @@ app.get("/export.xlsx", async (c) => {
 app.get("/report", async (c) => {
   const f = filtersFromQuery((k) => c.req.query(k))
   return c.html(reportHtml("รายงานการตรวจ Grooming (HR)", await listForExport({ ...f, excludeDrafts: true }), f))
+})
+
+// Summary report (htask-1791121739323 #15.3) — on screen + PDF (print) + Excel.
+async function summaryFor(c: any) {
+  const f = filtersFromQuery((k) => c.req.query(k))
+  const d = buildSummary(await listForExport({ branch: f.branch, from: f.from, to: f.to, excludeDrafts: true }))
+  return { f, d }
+}
+
+app.get("/summary", async (c) => {
+  const { f, d } = await summaryFor(c)
+  const qs = queryString({ branch: f.branch, from: f.from, to: f.to })
+  const branchOpts = BRANCHES.map((b) => `<option value="${esc(b)}"${b === f.branch ? " selected" : ""}>${esc(b)}</option>`).join("")
+  const body = `
+    <div class="top-nav"><h1 style="margin:0;">รายงานสรุปผลตรวจเครื่องแต่งกายพนักงานหน้าร้าน</h1><a href="/hr">← แดชบอร์ด HR</a></div>
+    <form class="filter-bar" method="get" action="/hr/summary">
+      <div class="fb-field"><label>สาขา</label><select name="branch"><option value="">ทุกสาขา</option>${branchOpts}</select></div>
+      <div class="fb-field"><label>ตั้งแต่วันที่</label><input type="date" name="from" value="${esc(f.from ?? "")}"></div>
+      <div class="fb-field"><label>ถึงวันที่</label><input type="date" name="to" value="${esc(f.to ?? "")}"></div>
+      <div class="fb-actions">
+        <button type="submit" class="btn">ดูรายงาน</button>
+        <a class="btn btn-ghost" href="/hr/summary">ล้าง</a>
+        <a class="btn btn-ghost" href="/hr/summary/export.xlsx${qs}">Excel</a>
+        <a class="btn btn-ghost" href="/hr/summary/print${qs}" target="_blank" rel="noopener">PDF</a>
+      </div>
+    </form>
+    <div class="card">${summaryBodyHtml(d)}</div>`
+  return c.html(renderPage({ title: "รายงานสรุปผลตรวจ Grooming", body, styles: LIST_STYLES + SUMMARY_STYLES, wide: true }))
+})
+
+app.get("/summary/export.xlsx", async (c) => {
+  const { f, d } = await summaryFor(c)
+  return new Response(summaryXlsx(d, f), {
+    headers: {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="grooming-summary-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+    },
+  })
+})
+
+app.get("/summary/print", async (c) => {
+  const { f, d } = await summaryFor(c)
+  return c.html(summaryPrintHtml(d, f))
 })
 
 app.get("/:id", async (c) => {
@@ -125,6 +173,7 @@ app.get("/:id", async (c) => {
         <div class="check-item-label">${esc(def.label)} — ${result === "pass" ? "✅ ผ่าน" : result === "fail" ? "❌ ไม่ผ่าน" : "ยังไม่ได้ตรวจ"}
           ${confirmed ? `<span class="item-tag ok">✔ ยืนยันแล้ว</span>` : resubmitted ? `<span class="item-tag warn">แก้ไขแล้ว รอตรวจ</span>` : ""}</div>
         ${cur?.note ? `<p style="font-size:13px;color:#6b7280;margin:6px 0 0;">หมายเหตุ: ${esc(cur.note)}</p>` : ""}
+        ${cur?.fix ? `<p class="fix-line">วิธีแก้ไข: ${esc(cur.fix)}</p>` : ""}
         ${photoHtml}
         ${revHtml}
         ${reviewCtl}
@@ -174,6 +223,14 @@ app.get("/:id", async (c) => {
     <div class="card">
       <h2>รายการตรวจทั้ง ${CHECKLIST_TOTAL} ข้อ ${reviewing ? `<span class="sub" style="font-weight:400;">· รอยืนยัน ${openCount} ข้อ</span>` : ""}</h2>
       ${checklistHtml}
+    </div>
+    <div class="card plan-card">
+      <h2>แผนการแก้ไข ${planDueBadge(planDueState(insp))}</h2>
+      ${insp.plan_problem || insp.plan_solution || insp.plan_due_date ? `<table>
+        <tr><td style="width:160px;color:#64748b;">ปัญหาที่พบ</td><td style="white-space:pre-wrap;">${esc(insp.plan_problem || "-")}</td></tr>
+        <tr><td style="color:#64748b;">แนวทางแก้ไข</td><td style="white-space:normal;">${esc(insp.plan_solution || "-")}</td></tr>
+        <tr><td style="color:#64748b;">กำหนดเสร็จ</td><td>${insp.plan_due_date ? fmtDateTH(insp.plan_due_date) : "-"}</td></tr>
+      </table>` : `<p class="sub" style="margin:0;">ผู้ตรวจไม่ได้ระบุแผนการแก้ไข</p>`}
     </div>
     ${actionsHtml}
     <div class="card"><h2>ประวัติการดำเนินการ</h2>${historyHtml}</div>

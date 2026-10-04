@@ -13,11 +13,15 @@ function parseInput(body: any): InspectionInput {
     positionOther: body.positionOther ? String(body.positionOther).trim() : null,
     branch: String(body.branch || "").trim(),
     inspectDate: String(body.inspectDate || "").trim(),
+    planProblem: body.planProblem ? String(body.planProblem).trim().slice(0, 1000) || null : null,
+    planSolution: body.planSolution ? String(body.planSolution).trim().slice(0, 300) || null : null,
+    planDueDate: body.planDueDate ? String(body.planDueDate).trim().slice(0, 10) || null : null,
     items: Array.isArray(body.items)
       ? body.items.map((i: any) => ({
           itemId: String(i.itemId || ""),
           result: i.result === "pass" || i.result === "fail" ? i.result : null,
           note: i.note ? String(i.note).trim() : null,
+          fix: i.fix ? String(i.fix).trim() : null,
           corrective: i.correctiveNote ? { note: String(i.correctiveNote).trim(), at: null } : null,
         }))
       : [],
