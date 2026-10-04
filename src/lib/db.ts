@@ -1,6 +1,6 @@
 import postgres from "postgres"
 
-export const sql = postgres(process.env.DATABASE_URL as string, { max: 10 })
+export const sql = postgres(process.env.DATABASE_URL as string, { max: Number(process.env.DB_POOL_MAX || 10) })
 
 export async function initDB() {
   // One row per inspection. items/history are JSONB — always read/written
@@ -56,5 +56,16 @@ export async function initDB() {
       UNIQUE (inspection_id, item_id)
     )
   `
+  // v2 (2026-10-04, htask-1791116230138):
+  //  - photos get a `kind` ('before' = original evidence, 'after' = proof of
+  //    the corrective action for an item HR asked to revise) so HR can compare
+  //    them side by side; one photo per (inspection, item, kind).
+  //  - optional inspector email, used only to notify them when HR sends
+  //    items back (there is still no login in this app).
+  await sql`ALTER TABLE inspection_photos ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'before'`
+  await sql`ALTER TABLE inspection_photos DROP CONSTRAINT IF EXISTS inspection_photos_inspection_id_item_id_key`
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_inspection_photos_item_kind ON inspection_photos(inspection_id, item_id, kind)`
+  await sql`ALTER TABLE inspections ADD COLUMN IF NOT EXISTS inspector_email TEXT`
+  await sql`CREATE INDEX IF NOT EXISTS idx_inspections_inspect_date ON inspections(inspect_date)`
   console.log("[db] schema ready")
 }

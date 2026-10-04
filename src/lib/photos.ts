@@ -10,7 +10,9 @@ import { sql } from "./db"
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024 // 2MB after client-side compression, per doc 8.2
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png"]
 
-export async function savePhoto(inspectionId: number, itemId: string, mimeType: string, bytes: Uint8Array): Promise<{ ok: true } | { ok: false; error: string }> {
+export type PhotoKind = "before" | "after"
+
+export async function savePhoto(inspectionId: number, itemId: string, mimeType: string, bytes: Uint8Array, kind: PhotoKind = "before"): Promise<{ ok: true } | { ok: false; error: string }> {
   if (bytes.byteLength > MAX_PHOTO_BYTES) {
     return { ok: false, error: `ไฟล์ใหญ่เกินไป (จำกัด ${MAX_PHOTO_BYTES / 1024 / 1024}MB ต่อรูป)` }
   }
@@ -22,23 +24,31 @@ export async function savePhoto(inspectionId: number, itemId: string, mimeType: 
   // since re-taking a photo for the same item is the only realistic reason
   // to upload twice (matches the requirement's 1:1 photo-per-item rule).
   await sql`
-    INSERT INTO inspection_photos (inspection_id, item_id, mime_type, data_base64, size_bytes)
-    VALUES (${inspectionId}, ${itemId}, ${mimeType}, ${base64}, ${bytes.byteLength})
-    ON CONFLICT (inspection_id, item_id) DO UPDATE SET mime_type = ${mimeType}, data_base64 = ${base64}, size_bytes = ${bytes.byteLength}, uploaded_at = NOW()
+    INSERT INTO inspection_photos (inspection_id, item_id, kind, mime_type, data_base64, size_bytes)
+    VALUES (${inspectionId}, ${itemId}, ${kind}, ${mimeType}, ${base64}, ${bytes.byteLength})
+    ON CONFLICT (inspection_id, item_id, kind) DO UPDATE SET mime_type = ${mimeType}, data_base64 = ${base64}, size_bytes = ${bytes.byteLength}, uploaded_at = NOW()
   `
   return { ok: true }
 }
 
-export async function getPhoto(inspectionId: number, itemId: string): Promise<{ mime_type: string; data_base64: string } | null> {
-  const rows = await sql`SELECT mime_type, data_base64 FROM inspection_photos WHERE inspection_id = ${inspectionId} AND item_id = ${itemId}`
+export async function getPhoto(inspectionId: number, itemId: string, kind: PhotoKind = "before"): Promise<{ mime_type: string; data_base64: string } | null> {
+  const rows = await sql`SELECT mime_type, data_base64 FROM inspection_photos WHERE inspection_id = ${inspectionId} AND item_id = ${itemId} AND kind = ${kind}`
   return rows[0] ?? null
 }
 
-export async function listPhotoItemIds(inspectionId: number): Promise<string[]> {
-  const rows = await sql`SELECT item_id FROM inspection_photos WHERE inspection_id = ${inspectionId}`
+export async function listPhotoItemIds(inspectionId: number, kind: PhotoKind = "before"): Promise<string[]> {
+  const rows = await sql`SELECT item_id FROM inspection_photos WHERE inspection_id = ${inspectionId} AND kind = ${kind}`
   return rows.map((r: any) => r.item_id)
 }
 
-export async function deletePhoto(inspectionId: number, itemId: string): Promise<void> {
-  await sql`DELETE FROM inspection_photos WHERE inspection_id = ${inspectionId} AND item_id = ${itemId}`
+/** { before: Set<itemId>, after: Set<itemId> } in one query. */
+export async function listPhotoKinds(inspectionId: number): Promise<{ before: Set<string>; after: Set<string> }> {
+  const rows = await sql`SELECT item_id, kind FROM inspection_photos WHERE inspection_id = ${inspectionId}`
+  const out = { before: new Set<string>(), after: new Set<string>() }
+  for (const r of rows as any[]) (r.kind === "after" ? out.after : out.before).add(r.item_id)
+  return out
+}
+
+export async function deletePhoto(inspectionId: number, itemId: string, kind: PhotoKind = "before"): Promise<void> {
+  await sql`DELETE FROM inspection_photos WHERE inspection_id = ${inspectionId} AND item_id = ${itemId} AND kind = ${kind}`
 }

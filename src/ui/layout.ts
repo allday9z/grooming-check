@@ -68,6 +68,29 @@ export function renderPage(opts: { title: string; body: string; styles?: string;
   .lightbox img { max-width:100%; max-height:100%; border-radius:6px; }
   .reject-banner { background:#fff3e0; border:1px solid #f0c674; border-radius:10px; padding:14px 16px; margin-bottom:16px; }
   .reject-banner b { color:#9c4a03; }
+  .btn-sm { padding:8px 14px; font-size:12.5px; cursor:pointer; }
+  .btn-xs { padding:5px 10px; font-size:12px; }
+  .item-tag { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; font-size:11.5px; font-weight:700; vertical-align:middle; }
+  .item-tag.ok { background:#e4f7ea; color: var(--pass); }
+  .item-tag.warn { background:#fff3e0; color: var(--pending); }
+  .check-item.locked-item { opacity:.7; background:#fafbfb; }
+  .check-item.rev-item, .check-item.rev-flag { border-color:#f0b35c; background:#fffaf2; box-shadow:0 0 0 2px #fde7c2 inset; }
+  .rev-box { background:#fff3e0; border:1px solid #f5c98a; border-radius:8px; padding:10px 12px; margin:0 0 10px; }
+  .rev-title { font-size:12.5px; font-weight:700; color:#9c4a03; }
+  .rev-comment { font-size:14px; margin-top:4px; white-space:pre-wrap; }
+  .rev-by { font-size:12px; color: var(--muted); margin-top:4px; }
+  .corrective-done { margin-top:8px; font-size:13.5px; color: var(--pass); white-space:pre-wrap; }
+  .after-box { margin-top:10px; padding:10px 12px; border:1.5px dashed #f0b35c; border-radius:8px; background:#fff; }
+  .after-box textarea { width:100%; padding:9px 10px; border:1.5px solid var(--border); border-radius:8px; font-family:inherit; font-size:14px; }
+  .ba-compare { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; margin-top:10px; }
+  .ba-label { font-size:12px; font-weight:700; color: var(--muted); margin-bottom:4px; }
+  .ba-img { width:140px; height:140px; }
+  .ba-note { flex-basis:100%; font-size:13px; color: var(--pass); }
+  .rev-toggle { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13.5px; font-weight:600; color:#9c4a03; cursor:pointer; }
+  .rev-toggle input { width:18px; height:18px; accent-color:#d97706; }
+  .rev-comment-box { margin-top:6px; }
+  .rev-comment-box textarea { width:100%; padding:9px 10px; border:1.5px solid #f0b35c; border-radius:8px; font-family:inherit; font-size:14px; }
+  .review-card { border:2px solid var(--brand); }
   ${opts.styles ?? ""}
   @media (max-width: 640px) {
     .field input[type=text], .field select { font-size:16px; }

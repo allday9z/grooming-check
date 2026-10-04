@@ -1,26 +1,32 @@
 /**
- * Inspection submission + HR approval workflow. Status flow (per
- * requirement doc section 3):
- *   draft -> pending -> approved (terminal)
- *   draft -> pending -> rejected -> (edit + resubmit) -> pending (loop,
- *     unlimited cycles)
+ * Inspection submission + HR review workflow.
  *
- * No login in this MVP (doc section 9.1's explicit decision — free-text
- * name entry only, no SSO/RBAC yet) so "actor" everywhere is just the
- * name someone typed, not a verified account. Every status transition is
- * appended to `history` (doc section 6.3) for audit/traceability, which
- * matters most here because a single inspection can bounce through many
- * reject/resubmit cycles before approval.
+ * Status flow:
+ *   draft -> pending -> approved (terminal)
+ *   draft -> pending -> rejected -> (fix flagged items) -> pending (loop)
+ *
+ * v2 (2026-10-04, htask-1791116230138) — per-item review:
+ *  - HR ticks "Request revision" on individual items (each with its own
+ *    comment) and presses "Confirm Entire Audit ID": every item NOT ticked
+ *    is confirmed (closed for good); if nothing is ticked the audit is
+ *    approved. Ticked items go back to the inspector.
+ *  - The inspector can then change ONLY the flagged items, and must submit
+ *    a corrective-action note + an "after" photo for each (Before/After).
+ *  - All of that is enforced here, server-side — the page only mirrors it.
+ *  - Overall result: pass when >= PASS_THRESHOLD_PERCENT of items pass.
+ *
+ * No login in this app — "actor" everywhere is the name someone typed.
+ * Every status transition is appended to `history` for audit.
  */
 import { sql } from "./db"
 import { CHECKLIST_ITEMS, CHECKLIST_TOTAL } from "./checklist"
+import { listPhotoKinds } from "./photos"
 
-// The postgres driver doesn't always auto-deserialize JSONB columns back
-// into JS arrays in this environment (observed directly: a fresh row's
-// `items`/`history` columns came back as raw JSON strings, not arrays) —
-// same defensive parsing already needed for JSONB columns in the sibling
-// uficon-prf project this session. Always route reads through this instead
-// of assuming the driver parsed it.
+/** Grading rule from the business (htask-1791116230138): "ใช่ >= 80% = ผ่าน". */
+export const PASS_THRESHOLD_PERCENT = 80
+
+// The postgres driver doesn't always auto-deserialize JSONB columns in this
+// environment — always route reads through this.
 export function parseJsonbArray<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[]
   if (typeof value === "string") {
@@ -34,14 +40,33 @@ export function parseJsonbArray<T>(value: unknown): T[] {
   return []
 }
 
+export interface RevisionRequest {
+  comment: string
+  by: string
+  at: string
+  cycle: number
+}
+
+export interface CorrectiveAction {
+  note: string
+  at: string | null
+}
+
 export interface ChecklistItemInput {
   itemId: string
   result: "pass" | "fail" | null
   note: string | null
+  /** Set by HR: this item must be fixed by the inspector. */
+  revision?: RevisionRequest | null
+  /** Set by HR: item accepted and closed — never editable again. */
+  confirmed?: boolean
+  /** Inspector's reply to a revision request ("Corrective action submitted"). */
+  corrective?: CorrectiveAction | null
 }
 
 export interface InspectionInput {
   inspectorName: string
+  inspectorEmail: string | null
   position: string
   positionOther: string | null
   branch: string
@@ -50,147 +75,246 @@ export interface InspectionInput {
 }
 
 export interface HistoryEntry {
-  action: "created" | "saved" | "submitted" | "approved" | "rejected"
+  action: "created" | "saved" | "submitted" | "approved" | "rejected" | "revision_requested" | "deleted"
   by: string
   at: string
   cycle: number
   comment: string | null
+  items?: string[]
 }
 
 function genToken(): string {
   return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")
 }
 
-function normalizeItems(items: ChecklistItemInput[]): ChecklistItemInput[] {
-  // Always store exactly CHECKLIST_ITEMS.length entries, in canonical
-  // order, regardless of what the client sent — the checklist is fixed
-  // (see lib/checklist.ts), so this keeps the stored `items` array shape
-  // predictable no matter what the client's DOM iteration order was.
+/** Always exactly CHECKLIST_ITEMS.length entries, in canonical order. Only
+ * the inspector-owned fields come from `items`; HR-owned fields
+ * (revision/confirmed) are carried over from `existing` so a client can
+ * never forge or clear them. */
+function normalizeItems(items: ChecklistItemInput[], existing: ChecklistItemInput[] = []): ChecklistItemInput[] {
   const byId = new Map(items.map((i) => [i.itemId, i]))
+  const oldById = new Map(existing.map((i) => [i.itemId, i]))
   return CHECKLIST_ITEMS.map((def) => {
     const found = byId.get(def.itemId)
-    return { itemId: def.itemId, result: found?.result ?? null, note: found?.note?.trim() || null }
+    const old = oldById.get(def.itemId)
+    const correctiveNote = found?.corrective?.note?.trim() || null
+    return {
+      itemId: def.itemId,
+      result: found?.result === "pass" || found?.result === "fail" ? found.result : null,
+      note: found?.note?.trim() || null,
+      revision: old?.revision ?? null,
+      confirmed: !!old?.confirmed,
+      corrective: correctiveNote ? { note: correctiveNote, at: old?.corrective?.at ?? null } : null,
+    }
   })
 }
 
-function scoreOf(items: ChecklistItemInput[]): { score: number; percent: number; overallResult: string } {
+/** Items HR sent back that the inspector still has to fix. */
+export function openRevisionIds(items: ChecklistItemInput[]): string[] {
+  return items.filter((i) => i.revision && !i.confirmed).map((i) => i.itemId)
+}
+
+/** For a rejected audit with per-item revision requests, the inspector may
+ * change ONLY those items — everything else (header + other items) is
+ * taken from the stored record, whatever the client sent. */
+function mergeForRevision(stored: any, input: InspectionInput): InspectionInput {
+  const storedItems = parseJsonbArray<ChecklistItemInput>(stored.items)
+  const open = new Set(openRevisionIds(storedItems))
+  const incoming = new Map(input.items.map((i) => [i.itemId, i]))
+  return {
+    inspectorName: stored.inspector_name,
+    inspectorEmail: stored.inspector_email ?? null,
+    position: stored.position,
+    positionOther: stored.position_other,
+    branch: stored.branch,
+    inspectDate: dateOnly(stored.inspect_date),
+    items: storedItems.map((it) => (open.has(it.itemId) && incoming.has(it.itemId) ? { ...it, ...pickInspectorFields(incoming.get(it.itemId)!) } : it)),
+  }
+}
+
+function pickInspectorFields(i: ChecklistItemInput): Partial<ChecklistItemInput> {
+  return { result: i.result, note: i.note, corrective: i.corrective ?? null }
+}
+
+export function dateOnly(d: any): string {
+  if (!d) return ""
+  if (d instanceof Date) return d.toISOString().slice(0, 10)
+  return String(d).slice(0, 10)
+}
+
+export function scoreOf(items: ChecklistItemInput[]): { score: number; percent: number; overallResult: string } {
   const score = items.filter((i) => i.result === "pass").length
   const percent = Math.round((score / CHECKLIST_TOTAL) * 100)
-  // Default MVP rule (doc 7.3): must pass ALL items, no percentage
-  // threshold — flagged in the doc itself as a default assumption pending
-  // business confirmation, not a final decision. See lib/checklist.ts /
-  // this project's README for where to change it if the threshold changes.
-  const overallResult = score === CHECKLIST_TOTAL ? "pass" : "fail"
+  const overallResult = percent >= PASS_THRESHOLD_PERCENT ? "pass" : "fail"
   return { score, percent, overallResult }
+}
+
+/** A brand-new draft is only created once there's something worth saving
+ * (htask-1791116230138 #9 — opening "new" no longer leaves empty drafts). */
+export function isEmptyInput(input: InspectionInput): boolean {
+  return !input.inspectorName?.trim() && !input.branch?.trim() && !input.position?.trim() && !input.items.some((i) => i.result || i.note)
 }
 
 export async function createDraft(input: InspectionInput, actorName: string): Promise<{ id: number; token: string }> {
   const items = normalizeItems(input.items)
   const token = genToken()
   const history: HistoryEntry[] = [{ action: "created", by: actorName, at: new Date().toISOString(), cycle: 1, comment: null }]
-
   const rows = await sql`
-    INSERT INTO inspections (public_token, inspector_name, position, position_other, branch, inspect_date, items, status, cycle, history)
-    VALUES (${token}, ${input.inspectorName}, ${input.position}, ${input.positionOther}, ${input.branch}, ${input.inspectDate}, ${JSON.stringify(items)}, 'draft', 1, ${JSON.stringify(history)})
+    INSERT INTO inspections (public_token, inspector_name, inspector_email, position, position_other, branch, inspect_date, items, status, cycle, history)
+    VALUES (${token}, ${input.inspectorName}, ${input.inspectorEmail}, ${input.position}, ${input.positionOther}, ${input.branch}, ${input.inspectDate || new Date().toISOString().slice(0, 10)}, ${JSON.stringify(items)}, 'draft', 1, ${JSON.stringify(history)})
     RETURNING id
   `
   return { id: rows[0].id as number, token }
 }
 
 /** Autosave — updates the draft/rejected record in place without touching
- * status or history (per doc 4.5: autosave must not interrupt typing, and
- * shouldn't spam the audit trail with every keystroke). */
+ * status or history. */
 export async function saveDraft(token: string, input: InspectionInput): Promise<void> {
-  const [insp] = await sql`SELECT id, status FROM inspections WHERE public_token = ${token} AND deleted_at IS NULL`
+  const [insp] = await sql`SELECT * FROM inspections WHERE public_token = ${token} AND deleted_at IS NULL`
   if (!insp) throw new Error("not_found")
   if (insp.status !== "draft" && insp.status !== "rejected") throw new Error("wrong_status")
 
-  const items = normalizeItems(input.items)
+  const storedItems = parseJsonbArray<ChecklistItemInput>(insp.items)
+  const effective = insp.status === "rejected" && openRevisionIds(storedItems).length ? mergeForRevision(insp, input) : input
+  const items = normalizeItems(effective.items, storedItems)
   await sql`
     UPDATE inspections SET
-      inspector_name = ${input.inspectorName}, position = ${input.position}, position_other = ${input.positionOther},
-      branch = ${input.branch}, inspect_date = ${input.inspectDate}, items = ${JSON.stringify(items)}, updated_at = NOW()
+      inspector_name = ${effective.inspectorName}, inspector_email = ${effective.inspectorEmail}, position = ${effective.position},
+      position_other = ${effective.positionOther}, branch = ${effective.branch}, inspect_date = ${effective.inspectDate || dateOnly(insp.inspect_date)},
+      items = ${JSON.stringify(items)}, updated_at = NOW()
     WHERE id = ${insp.id}
   `
 }
 
-/** Validates the full submission-gating rule set from doc 7.4 — every
- * check here must ALSO be enforced client-side in real time (per 7.1), but
- * this is the authoritative check; the client-side one is just UX. */
-export function validateForSubmit(input: InspectionInput): string | null {
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/** Authoritative submission rules (htask-1791116230138 #8) — the page
+ * checks the same things live, but this is what actually gates a submit:
+ *  - complete header (name, position (+other), branch, date; email format
+ *    if given)
+ *  - every item checked; fail => note; pass => photo (before or after)
+ *  - every open revision item => corrective-action note + "after" photo */
+export function validateForSubmit(input: InspectionInput, photos: { before: Set<string>; after: Set<string> }, openRevisions: string[] = []): string | null {
   if (!input.inspectorName?.trim()) return "missing_inspector_name"
   if (!input.position?.trim()) return "missing_position"
   if (input.position === "อื่นๆ" && !input.positionOther?.trim()) return "missing_position_other"
   if (!input.branch?.trim()) return "missing_branch"
-  if (!input.inspectDate?.trim()) return "missing_date"
+  if (!input.inspectDate?.trim() || isNaN(Date.parse(input.inspectDate))) return "missing_date"
+  if (input.inspectorEmail && !EMAIL_RE.test(input.inspectorEmail)) return "invalid_email"
 
-  const items = normalizeItems(input.items)
-  for (const item of items) {
+  const open = new Set(openRevisions)
+  for (const item of input.items) {
     if (item.result !== "pass" && item.result !== "fail") return `item_not_checked:${item.itemId}`
-    if (item.result === "fail" && !item.note) return `item_missing_note:${item.itemId}`
+    if (item.result === "fail" && !item.note?.trim()) return `item_missing_note:${item.itemId}`
+    if (item.result === "pass" && !photos.before.has(item.itemId) && !photos.after.has(item.itemId)) return `item_missing_photo:${item.itemId}`
+    if (open.has(item.itemId)) {
+      if (!item.corrective?.note?.trim()) return `item_missing_corrective_note:${item.itemId}`
+      if (!photos.after.has(item.itemId)) return `item_missing_after_photo:${item.itemId}`
+    }
   }
   return null
 }
 
-export async function submitForReview(token: string, input: InspectionInput, actorName: string): Promise<void> {
-  const [insp] = await sql`SELECT id, status, cycle, history FROM inspections WHERE public_token = ${token} AND deleted_at IS NULL`
+/** Human-readable Thai for the validation codes above. */
+export function validationMessage(code: string): string {
+  const [key, itemId] = code.split(":")
+  const label = itemId ? CHECKLIST_ITEMS.find((i) => i.itemId === itemId)?.label ?? itemId : ""
+  const map: Record<string, string> = {
+    missing_inspector_name: "กรุณากรอกชื่อผู้ตรวจ",
+    missing_position: "กรุณาเลือกตำแหน่ง",
+    missing_position_other: "กรุณาระบุตำแหน่ง",
+    missing_branch: "กรุณาเลือกสาขา",
+    missing_date: "กรุณาระบุวันที่ตรวจ",
+    invalid_email: "รูปแบบอีเมลไม่ถูกต้อง",
+    item_not_checked: `ยังไม่ได้ตรวจข้อ "${label}"`,
+    item_missing_note: `ข้อ "${label}" ไม่ผ่าน ต้องระบุหมายเหตุ`,
+    item_missing_photo: `ข้อ "${label}" ผ่าน ต้องแนบรูป`,
+    item_missing_corrective_note: `ข้อ "${label}" ต้องระบุการแก้ไข (Corrective action)`,
+    item_missing_after_photo: `ข้อ "${label}" ต้องแนบรูปหลังแก้ไข (After)`,
+    wrong_status: "รายการนี้ส่งแล้ว แก้ไขไม่ได้",
+    not_found: "ไม่พบรายการตรวจ",
+  }
+  return map[key!] || code
+}
+
+export async function submitForReview(token: string, rawInput: InspectionInput, actorName: string): Promise<{ id: number }> {
+  const [insp] = await sql`SELECT * FROM inspections WHERE public_token = ${token} AND deleted_at IS NULL`
   if (!insp) throw new Error("not_found")
   if (insp.status !== "draft" && insp.status !== "rejected") throw new Error("wrong_status")
 
-  const validationError = validateForSubmit(input)
+  const storedItems = parseJsonbArray<ChecklistItemInput>(insp.items)
+  const open = insp.status === "rejected" ? openRevisionIds(storedItems) : []
+  const input = open.length ? mergeForRevision(insp, rawInput) : rawInput
+  const items = normalizeItems(input.items, storedItems)
+  const photos = await listPhotoKinds(insp.id)
+
+  const validationError = validateForSubmit({ ...input, items }, photos, open)
   if (validationError) throw new Error(validationError)
 
-  const items = normalizeItems(input.items)
-  const requiresPhoto = items.filter((i) => i.result === "pass").map((i) => i.itemId)
-  if (requiresPhoto.length) {
-    const photoRows = await sql`SELECT item_id FROM inspection_photos WHERE inspection_id = ${insp.id} AND item_id IN ${sql(requiresPhoto)}`
-    const havePhoto = new Set(photoRows.map((r: any) => r.item_id))
-    const missing = requiresPhoto.find((id) => !havePhoto.has(id))
-    if (missing) throw new Error(`item_missing_photo:${missing}`)
-  }
+  const now = new Date().toISOString()
+  for (const it of items) if (open.includes(it.itemId) && it.corrective) it.corrective.at = now
 
   const { score, percent, overallResult } = scoreOf(items)
   const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
-  history.push({ action: "submitted", by: actorName, at: new Date().toISOString(), cycle: insp.cycle, comment: null })
+  history.push({ action: "submitted", by: actorName, at: now, cycle: insp.cycle, comment: open.length ? "Corrective action submitted" : null, items: open.length ? open : undefined })
 
   await sql`
     UPDATE inspections SET
-      inspector_name = ${input.inspectorName}, position = ${input.position}, position_other = ${input.positionOther},
+      inspector_name = ${input.inspectorName}, inspector_email = ${input.inspectorEmail}, position = ${input.position}, position_other = ${input.positionOther},
       branch = ${input.branch}, inspect_date = ${input.inspectDate}, items = ${JSON.stringify(items)},
       status = 'pending', score = ${score}, percent = ${percent}, overall_result = ${overallResult},
       submitted_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW()
     WHERE id = ${insp.id}
   `
+  return { id: insp.id }
 }
 
-export async function approve(id: number, reviewerName: string): Promise<void> {
-  const [insp] = await sql`SELECT id, status, cycle, history FROM inspections WHERE id = ${id} AND deleted_at IS NULL`
+/** HR's single review action — "Confirm Entire Audit ID". Every item not
+ * listed in `revisions` is confirmed (closed); listed items go back to the
+ * inspector with their own comment. No revisions => approved. */
+export async function reviewAudit(id: number, reviewerName: string, revisions: { itemId: string; comment: string }[], overallComment: string | null): Promise<{ status: "approved" | "rejected"; revisionIds: string[] }> {
+  const [insp] = await sql`SELECT * FROM inspections WHERE id = ${id} AND deleted_at IS NULL`
   if (!insp) throw new Error("not_found")
   if (insp.status !== "pending") throw new Error("wrong_status")
 
-  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
-  history.push({ action: "approved", by: reviewerName, at: new Date().toISOString(), cycle: insp.cycle, comment: null })
+  const items = normalizeItems(parseJsonbArray<ChecklistItemInput>(insp.items), parseJsonbArray<ChecklistItemInput>(insp.items))
+  const valid = new Set(items.filter((i) => !i.confirmed).map((i) => i.itemId))
+  const revMap = new Map<string, string>()
+  for (const r of revisions) {
+    if (!valid.has(r.itemId)) continue
+    if (!r.comment?.trim()) throw new Error(`revision_comment_required:${r.itemId}`)
+    revMap.set(r.itemId, r.comment.trim())
+  }
 
+  const now = new Date().toISOString()
+  for (const it of items) {
+    if (revMap.has(it.itemId)) {
+      it.revision = { comment: revMap.get(it.itemId)!, by: reviewerName, at: now, cycle: insp.cycle }
+      it.confirmed = false
+      it.corrective = null
+    } else {
+      it.confirmed = true
+    }
+  }
+
+  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
+  const revisionIds = [...revMap.keys()]
+  if (!revisionIds.length) {
+    history.push({ action: "approved", by: reviewerName, at: now, cycle: insp.cycle, comment: overallComment })
+    await sql`
+      UPDATE inspections SET status = 'approved', items = ${JSON.stringify(items)}, hr_reviewer = ${reviewerName}, hr_comment = ${overallComment},
+        hr_reviewed_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW()
+      WHERE id = ${id}
+    `
+    return { status: "approved", revisionIds }
+  }
+  history.push({ action: "revision_requested", by: reviewerName, at: now, cycle: insp.cycle, comment: overallComment, items: revisionIds })
   await sql`
-    UPDATE inspections SET status = 'approved', hr_reviewer = ${reviewerName}, hr_comment = NULL, hr_reviewed_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW()
+    UPDATE inspections SET status = 'rejected', cycle = ${insp.cycle + 1}, items = ${JSON.stringify(items)}, hr_reviewer = ${reviewerName},
+      hr_comment = ${overallComment}, hr_reviewed_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW()
     WHERE id = ${id}
   `
-}
-
-export async function reject(id: number, reviewerName: string, comment: string): Promise<void> {
-  const [insp] = await sql`SELECT id, status, cycle, history FROM inspections WHERE id = ${id} AND deleted_at IS NULL`
-  if (!insp) throw new Error("not_found")
-  if (insp.status !== "pending") throw new Error("wrong_status")
-  if (!comment?.trim()) throw new Error("comment_required")
-
-  const nextCycle = insp.cycle + 1
-  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
-  history.push({ action: "rejected", by: reviewerName, at: new Date().toISOString(), cycle: insp.cycle, comment: comment.trim() })
-
-  await sql`
-    UPDATE inspections SET status = 'rejected', cycle = ${nextCycle}, hr_reviewer = ${reviewerName}, hr_comment = ${comment.trim()}, hr_reviewed_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW()
-    WHERE id = ${id}
-  `
+  return { status: "rejected", revisionIds }
 }
 
 export async function getByToken(token: string): Promise<any | null> {
@@ -203,10 +327,44 @@ export async function getById(id: number): Promise<any | null> {
   return rows[0] ?? null
 }
 
-export async function listAll(statusFilter?: string): Promise<any[]> {
-  return statusFilter && statusFilter !== "all"
-    ? sql`SELECT * FROM inspections WHERE status = ${statusFilter} AND deleted_at IS NULL ORDER BY created_at DESC`
-    : sql`SELECT * FROM inspections WHERE deleted_at IS NULL ORDER BY created_at DESC`
+export interface ListFilters {
+  status?: string
+  branch?: string
+  from?: string
+  to?: string
+  q?: string
+  /** HR never sees drafts. */
+  excludeDrafts?: boolean
+}
+
+function filterWhere(f: ListFilters) {
+  const conds = [sql`deleted_at IS NULL`]
+  if (f.status && f.status !== "all") conds.push(sql`status = ${f.status}`)
+  if (f.excludeDrafts) conds.push(sql`status <> 'draft'`)
+  if (f.branch) conds.push(sql`branch = ${f.branch}`)
+  if (f.from && !isNaN(Date.parse(f.from))) conds.push(sql`inspect_date >= ${f.from}`)
+  if (f.to && !isNaN(Date.parse(f.to))) conds.push(sql`inspect_date <= ${f.to}`)
+  if (f.q?.trim()) {
+    const like = `%${f.q.trim()}%`
+    conds.push(sql`(inspector_name ILIKE ${like} OR branch ILIKE ${like} OR position ILIKE ${like} OR COALESCE(position_other, '') ILIKE ${like})`)
+  }
+  return conds.reduce((acc, c, i) => (i === 0 ? c : sql`${acc} AND ${c}`))
+}
+
+export const PAGE_SIZE = 20
+
+export async function listFiltered(f: ListFilters, page = 1, pageSize = PAGE_SIZE): Promise<{ rows: any[]; total: number; page: number; pages: number }> {
+  const where = filterWhere(f)
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM inspections WHERE ${where}`
+  const pages = Math.max(1, Math.ceil(n / pageSize))
+  const p = Math.min(Math.max(1, page), pages)
+  const rows = await sql`SELECT * FROM inspections WHERE ${where} ORDER BY inspect_date DESC, created_at DESC LIMIT ${pageSize} OFFSET ${(p - 1) * pageSize}`
+  return { rows, total: n, page: p, pages }
+}
+
+/** Every matching row, for Excel/PDF export. */
+export async function listForExport(f: ListFilters): Promise<any[]> {
+  return sql`SELECT * FROM inspections WHERE ${filterWhere(f)} ORDER BY inspect_date DESC, created_at DESC LIMIT 5000`
 }
 
 export async function countByStatus(): Promise<Record<string, number>> {
@@ -216,9 +374,32 @@ export async function countByStatus(): Promise<Record<string, number>> {
   return out
 }
 
-/** Admin-only "clear out test data" — soft delete, matching the pattern
- * used throughout this session's other projects (never a hard DELETE by a
- * regular user — see doc 8.3's explicit "ห้ามลบข้อมูลถาวรโดยผู้ใช้ทั่วไป"). */
+/** Soft delete (never a hard DELETE by a regular user). */
 export async function softDelete(id: number): Promise<void> {
   await sql`UPDATE inspections SET deleted_at = NOW() WHERE id = ${id}`
+}
+
+/** Inspector deletes their own draft (htask-1791116230138 #9) — drafts
+ * only; once submitted it's part of the HR record. */
+export async function deleteDraft(token: string): Promise<void> {
+  const [insp] = await sql`SELECT id, status FROM inspections WHERE public_token = ${token} AND deleted_at IS NULL`
+  if (!insp) throw new Error("not_found")
+  if (insp.status !== "draft") throw new Error("only_drafts")
+  await sql`UPDATE inspections SET deleted_at = NOW() WHERE id = ${insp.id}`
+}
+
+/** Cleans up drafts that never got any content (from the old behaviour of
+ * creating a row the moment "new" was opened): no name, no branch, no
+ * checked item, no photo, and untouched for over an hour. */
+export async function purgeEmptyDrafts(): Promise<number> {
+  const rows = await sql`
+    UPDATE inspections i SET deleted_at = NOW()
+    WHERE i.status = 'draft' AND i.deleted_at IS NULL
+      AND COALESCE(TRIM(i.inspector_name), '') = '' AND COALESCE(TRIM(i.branch), '') = ''
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.items) = 'array' THEN i.items WHEN jsonb_typeof(i.items) = 'string' THEN (i.items #>> '{}')::jsonb ELSE '[]'::jsonb END) e WHERE e->>'result' IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM inspection_photos p WHERE p.inspection_id = i.id)
+      AND i.updated_at < NOW() - INTERVAL '1 hour'
+    RETURNING i.id
+  `
+  return rows.length
 }
