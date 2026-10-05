@@ -34,7 +34,7 @@ app.get("/", async (c) => {
   const body = `
     <div class="top-nav">
       <h1 style="margin:0;">รายการตรวจ Grooming</h1>
-      <a href="/hr">สำหรับฝ่าย HR →</a>
+      <a href="/hr">🔒 สำหรับฝ่าย HR →</a>
     </div>
     <a class="btn" href="/inspect/new" style="display:block;margin-bottom:16px;">+ สร้างรายการตรวจใหม่</a>
     ${filterBarHtml("/inspect", f)}

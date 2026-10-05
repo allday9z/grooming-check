@@ -3,6 +3,7 @@ import { createDraft, saveDraft, submitForReview, getByToken, getById, deleteDra
 import { savePhoto, getPhoto, deletePhoto, type PhotoKind } from "../lib/photos"
 import { isValidPhotoSlot, GROUP_PHOTO_SLOTS } from "../lib/checklist"
 import { notifyHrSubmitted } from "../lib/notify"
+import { requireHr } from "../lib/hr-auth"
 
 const app = new Hono()
 
@@ -128,7 +129,8 @@ app.get("/inspect/:token/photo/:itemId", async (c) => {
   return new Response(Buffer.from(photo.data_base64, "base64"), { headers: { "Content-Type": photo.mime_type, "Cache-Control": "private, max-age=300" } })
 })
 
-app.get("/inspect-by-id/:id/photo/:itemId", async (c) => {
+// HR-only (browses by numeric id, which is guessable) — needs the HR login.
+app.get("/inspect-by-id/:id/photo/:itemId", requireHr, async (c) => {
   const photo = await getPhoto(parseInt(c.req.param("id"), 10), c.req.param("itemId"), kindOf(c.req.query("kind")))
   if (!photo) return c.text("ไม่พบรูปภาพ", 404)
   return new Response(Buffer.from(photo.data_base64, "base64"), { headers: { "Content-Type": photo.mime_type, "Cache-Control": "private, max-age=300" } })

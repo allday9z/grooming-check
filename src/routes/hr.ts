@@ -7,8 +7,51 @@ import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
 import { filtersFromQuery, filterBarHtml, paginationHtml, queryString, xlsxResponse, reportHtml, LIST_STYLES, buildSummary, summaryBodyHtml, summaryPrintHtml, summaryXlsx, SUMMARY_STYLES } from "../lib/report"
 import { BRANCHES } from "../lib/checklist"
 import { notifyInspectorReviewed } from "../lib/notify"
+import { requireHr, isHr, checkHrPassword, setHrCookie, clearHrCookie, safeNext } from "../lib/hr-auth"
 
 const app = new Hono()
+
+// ---- HR login (htask-1791178152734) — must stay ABOVE the requireHr gate ----
+app.get("/login", async (c) => {
+  if (await isHr(c)) return c.redirect(safeNext(c.req.query("next")))
+  const err = c.req.query("err")
+  const nextPath = safeNext(c.req.query("next"))
+  const body = `
+    <div class="card" style="max-width:420px;margin:40px auto;">
+      <h1 style="margin:0 0 4px;">สำหรับฝ่าย HR</h1>
+      <p class="sub">กรุณาใส่รหัสผ่านเพื่อเข้าสู่แดชบอร์ด HR</p>
+      ${err ? `<div class="reject-banner" style="margin-bottom:12px;">${err === "nopw" ? "ยังไม่ได้ตั้งรหัสผ่าน HR ในระบบ กรุณาติดต่อผู้ดูแลระบบ" : "รหัสผ่านไม่ถูกต้อง"}</div>` : ""}
+      <form method="post" action="/hr/login">
+        <input type="hidden" name="next" value="${esc(nextPath)}">
+        <div class="field"><label>รหัสผ่าน<span class="req">*</span></label><input type="password" name="password" required autofocus autocomplete="current-password" style="width:100%;padding:10px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:15px;"></div>
+        <button type="submit" class="btn" style="width:100%;">เข้าสู่ระบบ</button>
+      </form>
+      <p style="margin:14px 0 0;text-align:center;"><a href="/inspect" style="color:var(--brand);font-size:13.5px;">← กลับหน้าผู้ตรวจ</a></p>
+    </div>`
+  return c.html(renderPage({ title: "เข้าสู่ระบบ HR — Grooming Check", body }))
+})
+
+app.post("/login", async (c) => {
+  const form = await c.req.formData().catch(() => null)
+  const pw = String(form?.get("password") ?? "")
+  const nextPath = safeNext(String(form?.get("next") ?? ""))
+  if (!process.env.HR_PASSWORD) return c.redirect(`/hr/login?err=nopw&next=${encodeURIComponent(nextPath)}`)
+  if (!checkHrPassword(pw)) {
+    await new Promise((r) => setTimeout(r, 600)) // slow down guessing
+    return c.redirect(`/hr/login?err=1&next=${encodeURIComponent(nextPath)}`)
+  }
+  await setHrCookie(c)
+  return c.redirect(nextPath)
+})
+
+app.get("/logout", (c) => {
+  clearHrCookie(c)
+  return c.redirect("/hr/login")
+})
+
+// Everything below requires the HR password.
+app.use("*", requireHr)
+
 
 const HISTORY_LABEL: Record<string, string> = {
   created: "สร้างรายการ", saved: "บันทึกร่าง", submitted: "ส่งตรวจสอบ", approved: "ยืนยันทั้งรายการ (อนุมัติ)",
@@ -53,7 +96,7 @@ app.get("/", async (c) => {
   const body = `
     <div class="top-nav">
       <h1 style="margin:0;">แดชบอร์ด HR — ตรวจ Grooming</h1>
-      <span style="display:flex;gap:12px;flex-wrap:wrap;"><a href="/hr/summary">รายงานสรุปผลตรวจ →</a><a href="/inspect">← กลับหน้าผู้ตรวจ</a></span>
+      <span style="display:flex;gap:12px;flex-wrap:wrap;"><a href="/hr/summary">รายงานสรุปผลตรวจ →</a><a href="/inspect">← กลับหน้าผู้ตรวจ</a><a href="/hr/logout">ออกจากระบบ HR</a></span>
     </div>
     <div class="stat-grid">
       <div class="stat-box"><div class="num">${counts.pending}</div><div class="label">รอตรวจสอบ</div></div>
