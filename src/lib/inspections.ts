@@ -13,7 +13,7 @@
  *  - The inspector can then change ONLY the flagged items, and must submit
  *    a corrective-action note + an "after" photo for each (Before/After).
  *  - All of that is enforced here, server-side — the page only mirrors it.
- *  - Overall result: pass when >= PASS_THRESHOLD_PERCENT of items pass.
+ *  - Overall result: pass only when every item passes (PASS_THRESHOLD_PERCENT = 100).
  *
  * No login in this app — "actor" everywhere is the name someone typed.
  * Every status transition is appended to `history` for audit.
@@ -22,8 +22,10 @@ import { sql } from "./db"
 import { CHECKLIST_ITEMS, CHECKLIST_TOTAL, GROUP_PHOTO_SLOTS } from "./checklist"
 import { listPhotoKinds } from "./photos"
 
-/** Grading rule from the business (htask-1791116230138): "ใช่ >= 80% = ผ่าน". */
-export const PASS_THRESHOLD_PERCENT = 80
+/** Grading rule: was ">= 80% = ผ่าน" (htask-1791116230138); now every item
+ * must pass — 100% only, anything lower is ไม่ผ่าน (Preeyapan, htask-1791386476660). */
+export const PASS_THRESHOLD_PERCENT = 100
+export const PASS_RULE_LABEL = "ต้องผ่านทุกข้อ (100%)"
 
 // The postgres driver doesn't always auto-deserialize JSONB columns in this
 // environment — always route reads through this.
@@ -157,7 +159,8 @@ export function dateOnly(d: any): string {
 export function scoreOf(items: ChecklistItemInput[]): { score: number; percent: number; overallResult: string } {
   const score = items.filter((i) => i.result === "pass").length
   const percent = Math.round((score / CHECKLIST_TOTAL) * 100)
-  const overallResult = percent >= PASS_THRESHOLD_PERCENT ? "pass" : "fail"
+  // Compare the exact ratio, not the rounded percent (13/14 must never round up to a pass).
+  const overallResult = (score / CHECKLIST_TOTAL) * 100 >= PASS_THRESHOLD_PERCENT ? "pass" : "fail"
   return { score, percent, overallResult }
 }
 
@@ -204,8 +207,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Authoritative submission rules (htask-1791116230138 #8) — the page
  * checks the same things live, but this is what actually gates a submit:
- *  - complete header (name, position (+other), branch, date; email format
- *    if given)
+ *  - complete header (name, email, position (+other), branch, date)
  *  - every item checked; fail => note; pass => photo (before or after)
  *  - every open revision item => corrective-action note + "after" photo */
 export function validateForSubmit(input: InspectionInput, photos: { before: Set<string>; after: Set<string> }, openRevisions: string[] = []): string | null {
@@ -214,6 +216,10 @@ export function validateForSubmit(input: InspectionInput, photos: { before: Set<
   if (input.position === "อื่นๆ" && !input.positionOther?.trim()) return "missing_position_other"
   if (!input.branch?.trim()) return "missing_branch"
   if (!input.inspectDate?.trim() || isNaN(Date.parse(input.inspectDate))) return "missing_date"
+  // Inspector email is required (Preeyapan, htask-1791386476660). Not re-checked
+  // on a revision resubmit: the header is locked then, so an audit first sent
+  // without an email must still be able to send its fixes back.
+  if (!openRevisions.length && !input.inspectorEmail?.trim()) return "missing_email"
   if (input.inspectorEmail && !EMAIL_RE.test(input.inspectorEmail)) return "invalid_email"
   if (input.planDueDate && isNaN(Date.parse(input.planDueDate))) return "invalid_plan_due_date"
   // "ง. แนบรูปรวมที่ตรวจวันนี้" — at least one group photo (Preeyapan,
@@ -250,6 +256,7 @@ export function validationMessage(code: string): string {
     missing_position_other: "กรุณาระบุตำแหน่ง",
     missing_branch: "กรุณาเลือกสาขา",
     missing_date: "กรุณาระบุวันที่ตรวจ",
+    missing_email: "กรุณากรอกอีเมลผู้ตรวจ",
     invalid_email: "รูปแบบอีเมลไม่ถูกต้อง",
     item_not_checked: `ยังไม่ได้ตรวจข้อ "${label}"`,
     item_missing_note: `ข้อ "${label}" ไม่ผ่าน ต้องระบุหมายเหตุ`,

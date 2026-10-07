@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge, planDueBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, GROUP_PHOTO_SLOTS } from "../lib/checklist"
-import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, inspectionCode, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, inspectionCode, PASS_THRESHOLD_PERCENT, PASS_RULE_LABEL } from "../lib/inspections"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
 import { filtersFromQuery, filterBarHtml, paginationHtml, queryString, xlsxResponse, reportHtml, LIST_STYLES, buildSummary, summaryBodyHtml, summaryPrintHtml, summaryXlsx, SUMMARY_STYLES } from "../lib/report"
@@ -260,7 +260,7 @@ app.get("/:id", async (c) => {
       <div class="stat-grid" style="margin-top:14px;">
         <div class="stat-box"><div class="num">${insp.score ?? "-"}/${CHECKLIST_TOTAL}</div><div class="label">คะแนนผ่าน</div></div>
         <div class="stat-box"><div class="num">${insp.percent ?? "-"}%</div><div class="label">เปอร์เซ็นต์</div></div>
-        <div class="stat-box"><div class="num">${insp.overall_result === "pass" ? "ผ่าน" : insp.overall_result === "fail" ? "ไม่ผ่าน" : "-"}</div><div class="label">ผลรวม (เกณฑ์ ≥ ${PASS_THRESHOLD_PERCENT}%)</div></div>
+        <div class="stat-box"><div class="num">${insp.overall_result === "pass" ? "ผ่าน" : insp.overall_result === "fail" ? "ไม่ผ่าน" : "-"}</div><div class="label">ผลรวม (เกณฑ์: ${PASS_RULE_LABEL})</div></div>
       </div>
     </div>
     ${insp.hr_comment ? `<div class="reject-banner"><b>หมายเหตุล่าสุดจาก HR (${esc(insp.hr_reviewer)})</b><p style="margin:6px 0 0;">${esc(insp.hr_comment)}</p></div>` : ""}

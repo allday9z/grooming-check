@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, POSITIONS, BRANCHES, GROUP_PHOTO_SLOTS } from "../lib/checklist"
-import { getByToken, listFiltered, listForExport, parseJsonbArray, openRevisionIds, purgeEmptyDrafts, dateOnly, planDueState, inspectionCode, PASS_THRESHOLD_PERCENT } from "../lib/inspections"
+import { getByToken, listFiltered, listForExport, parseJsonbArray, openRevisionIds, purgeEmptyDrafts, dateOnly, planDueState, inspectionCode, PASS_THRESHOLD_PERCENT, PASS_RULE_LABEL } from "../lib/inspections"
 import { planDueBadge } from "../ui/layout"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
@@ -186,7 +186,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       <p class="sub">${isNew ? "ระบบจะบันทึกฉบับร่างให้อัตโนมัติเมื่อเริ่มกรอกข้อมูล" : `รหัสการตรวจ <b>${inspectionCode(insp.id)}</b> · รอบตรวจที่ ${insp.cycle}`}</p>
 
       <div class="field"><label>ชื่อผู้ตรวจ<span class="req">*</span></label><input type="text" id="f-name" value="${esc(insp?.inspector_name ?? "")}" ${dis}></div>
-      <div class="field"><label>อีเมลผู้ตรวจ <span style="font-weight:400;color:#6b7a7a;">(ไม่บังคับ — สำหรับรับแจ้งเตือนเมื่อ HR ขอให้แก้ไข/อนุมัติ)</span></label><input type="text" inputmode="email" id="f-email" value="${esc(insp?.inspector_email ?? "")}" placeholder="name@uficon.com" ${dis}><div class="errmsg" id="email-err">รูปแบบอีเมลไม่ถูกต้อง</div></div>
+      <div class="field"><label>อีเมลผู้ตรวจ<span class="req">*</span> <span style="font-weight:400;color:#6b7a7a;">(สำหรับรับแจ้งเตือนเมื่อ HR ขอให้แก้ไข/อนุมัติ)</span></label><input type="text" inputmode="email" id="f-email" value="${esc(insp?.inspector_email ?? "")}" placeholder="name@uficon.com" ${dis}><div class="errmsg" id="email-err">รูปแบบอีเมลไม่ถูกต้อง</div></div>
       <div class="field">
         <label>ตำแหน่ง<span class="req">*</span></label>
         <select id="f-position" ${dis}>
@@ -203,7 +203,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     <div class="card">
       <h2>รายการตรวจ Grooming (${CHECKLIST_TOTAL} ข้อ)</h2>
       <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progress-fill" style="width:0%;"></div></div>
-      <p class="sub" style="margin-bottom:16px;">ตรวจแล้ว <b id="progress-count">0</b> / ${CHECKLIST_TOTAL} ข้อ · ผ่าน <b id="pass-count">0</b> · ไม่ผ่าน <b id="fail-count">0</b> · <b id="percent-count">0</b>% <span id="overall-badge"></span> <span style="color:#94a3b8;">(เกณฑ์: ผ่าน ≥ ${PASS_THRESHOLD_PERCENT}%)</span></p>
+      <p class="sub" style="margin-bottom:16px;">ตรวจแล้ว <b id="progress-count">0</b> / ${CHECKLIST_TOTAL} ข้อ · ผ่าน <b id="pass-count">0</b> · ไม่ผ่าน <b id="fail-count">0</b> · <b id="percent-count">0</b>% <span id="overall-badge"></span> <span style="color:#94a3b8;">(เกณฑ์: ${PASS_RULE_LABEL})</span></p>
       ${checklistHtml}
     </div>
 
@@ -294,8 +294,9 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     });
     $('progress-count').textContent = done; $('pass-count').textContent = pass; $('fail-count').textContent = fail;
     var percent = Math.round(pass / CHECKLIST_TOTAL * 100);
+    var exactPercent = pass / CHECKLIST_TOTAL * 100;
     $('percent-count').textContent = percent;
-    $('overall-badge').innerHTML = done === CHECKLIST_TOTAL ? (percent >= PASS_THRESHOLD ? '<span class="badge approved">ผ่าน</span>' : '<span class="badge rejected">ไม่ผ่าน</span>') : '';
+    $('overall-badge').innerHTML = done === CHECKLIST_TOTAL ? (exactPercent >= PASS_THRESHOLD ? '<span class="badge approved">ผ่าน</span>' : '<span class="badge rejected">ไม่ผ่าน</span>') : '';
     $('progress-fill').style.width = (done / CHECKLIST_TOTAL * 100) + '%';
   }
 
@@ -314,7 +315,8 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     }
     return true;
   }
-  function emailOk() { var v = $('f-email').value.trim(); return !v || EMAIL_RE.test(v); }
+  // Required (not re-checked in revision mode, where the header is locked — matches the server rule).
+  function emailOk() { var v = $('f-email').value.trim(); return v ? EMAIL_RE.test(v) : REVISION_MODE; }
 
   function updateSubmitState() {
     if (!EDITABLE) return;
@@ -329,6 +331,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     var ok = allValid && headerOk && groupOk;
     $('submit-btn').disabled = !ok;
     $('submit-hint').classList.toggle('show', !ok);
+    $('email-err').textContent = $('f-email').value.trim() ? 'รูปแบบอีเมลไม่ถูกต้อง' : 'กรุณากรอกอีเมลผู้ตรวจ';
     $('email-err').classList.toggle('show', !emailOk());
   }
 

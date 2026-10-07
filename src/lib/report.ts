@@ -8,7 +8,7 @@ import * as XLSX from "xlsx"
 import { BRANCHES, CHECKLIST_ITEMS, CHECKLIST_TOTAL } from "./checklist"
 import { esc, STATUS_LABEL } from "../ui/layout"
 import { fmtDateTH, fmtDateTimeTH } from "./format"
-import { parseJsonbArray, planDueState, inspectionCode, PASS_THRESHOLD_PERCENT, type ListFilters } from "./inspections"
+import { parseJsonbArray, planDueState, inspectionCode, PASS_RULE_LABEL, type ListFilters } from "./inspections"
 import { CATEGORY_LABELS } from "./checklist"
 
 export function filtersFromQuery(q: (k: string) => string | undefined): ListFilters & { page: number } {
@@ -161,7 +161,9 @@ export interface SummaryData {
 
 export function buildSummary(rows: any[]): SummaryData {
   const scored = rows.filter((r) => r.percent != null)
-  const passed = scored.filter((r) => r.percent >= PASS_THRESHOLD_PERCENT).length
+  // Count by the result stored when each audit was submitted, so the summary
+  // always matches the ผ่าน/ไม่ผ่าน badge shown on that audit.
+  const passed = scored.filter((r) => r.overall_result === "pass").length
   const byStatus: Record<string, number> = {}
   for (const r of rows) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1
   const br = new Map<string, any>()
@@ -171,7 +173,7 @@ export function buildSummary(rows: any[]): SummaryData {
     if (r.percent != null) {
       b.n++
       b.sum += r.percent
-      if (r.percent >= PASS_THRESHOLD_PERCENT) b.passed++
+      if (r.overall_result === "pass") b.passed++
       else b.failed++
     }
     const d = String(r.inspect_date instanceof Date ? r.inspect_date.toISOString() : r.inspect_date).slice(0, 10)
@@ -220,7 +222,7 @@ export function summaryBodyHtml(d: SummaryData): string {
   return `
   <div class="sum-grid">
     <div class="sum-box"><div class="n">${d.total}</div><div class="l">รายการตรวจ (ส่งแล้ว)</div></div>
-    <div class="sum-box"><div class="n" style="color:#1a7f3c;">${d.passed}</div><div class="l">ผ่าน (≥ ${PASS_THRESHOLD_PERCENT}%)</div></div>
+    <div class="sum-box"><div class="n" style="color:#1a7f3c;">${d.passed}</div><div class="l">ผ่าน (${PASS_RULE_LABEL})</div></div>
     <div class="sum-box"><div class="n" style="color:#c22b2b;">${d.failed}</div><div class="l">ไม่ผ่าน</div></div>
     <div class="sum-box"><div class="n">${pct(d.avgPercent)}</div><div class="l">คะแนนเฉลี่ย</div></div>
     <div class="sum-box"><div class="n">${d.byStatus.approved ?? 0} / ${d.byStatus.pending ?? 0} / ${d.byStatus.rejected ?? 0}</div><div class="l">อนุมัติ / รอตรวจ / รอแก้ไข</div></div>
@@ -274,7 +276,7 @@ export function summaryXlsx(d: SummaryData, f: ListFilters): Uint8Array {
     [`ออกรายงานเมื่อ ${fmtDateTimeTH(new Date())}`],
     [],
     ["รายการตรวจ (ส่งแล้ว)", d.total],
-    [`ผ่าน (≥ ${PASS_THRESHOLD_PERCENT}%)`, d.passed],
+    [`ผ่าน (${PASS_RULE_LABEL})`, d.passed],
     ["ไม่ผ่าน", d.failed],
     ["คะแนนเฉลี่ย (%)", d.avgPercent],
     ["อนุมัติแล้ว", d.byStatus.approved ?? 0],
