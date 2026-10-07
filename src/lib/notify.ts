@@ -53,6 +53,8 @@ async function send(to: string[], subject: string, html: string): Promise<void> 
   }
 }
 
+// The button opens the submitted audit itself (read-only /inspect/<token>)
+// rather than the HR dashboard — Preeyapan, htask-1791358206756.
 export function notifyHrSubmitted(insp: any, resubmittedItems: string[]): void {
   const resub = resubmittedItems.length > 0
   const body = `
@@ -65,7 +67,7 @@ export function notifyHrSubmitted(insp: any, resubmittedItems: string[]): void {
       <tr><td style="color:#6b7a7a;padding-right:12px;">คะแนน</td><td>${insp.score ?? "-"}/${CHECKLIST_ITEMS.length} (${insp.percent ?? "-"}%)</td></tr>
     </table>
     ${resub ? `<p style="margin-top:12px;">ข้อที่แก้ไข: ${resubmittedItems.map((id) => esc(label(id))).join(", ")}</p>` : ""}`
-  void send(HR_EMAILS, `[Grooming] ${inspectionCode(insp.id)} ${resub ? "ส่งการแก้ไขกลับมา" : "รายการตรวจใหม่"} — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell(resub ? "ส่งการแก้ไขกลับมาแล้ว" : "รายการตรวจใหม่รอตรวจสอบ", body, `${APP_ORIGIN}/hr/${insp.id}`, "เปิดดูใน HR Dashboard"))
+  void send(HR_EMAILS, `[Grooming] ${inspectionCode(insp.id)} ${resub ? "ส่งการแก้ไขกลับมา" : "รายการตรวจใหม่"} — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell(resub ? "ส่งการแก้ไขกลับมาแล้ว" : "รายการตรวจใหม่รอตรวจสอบ", body, `${APP_ORIGIN}/inspect/${insp.public_token}`, "ดูรายการที่ส่งแล้ว"))
 }
 
 export function notifyInspectorReviewed(insp: any, status: "approved" | "rejected", revisions: { itemId: string; comment: string }[], reviewer: string, overallComment: string | null): void {
