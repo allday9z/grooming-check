@@ -19,7 +19,7 @@
  * Every status transition is appended to `history` for audit.
  */
 import { sql } from "./db"
-import { CHECKLIST_ITEMS, CHECKLIST_TOTAL } from "./checklist"
+import { CHECKLIST_ITEMS, CHECKLIST_TOTAL, GROUP_PHOTO_SLOTS } from "./checklist"
 import { listPhotoKinds } from "./photos"
 
 /** Grading rule from the business (htask-1791116230138): "ใช่ >= 80% = ผ่าน". */
@@ -216,6 +216,11 @@ export function validateForSubmit(input: InspectionInput, photos: { before: Set<
   if (!input.inspectDate?.trim() || isNaN(Date.parse(input.inspectDate))) return "missing_date"
   if (input.inspectorEmail && !EMAIL_RE.test(input.inspectorEmail)) return "invalid_email"
   if (input.planDueDate && isNaN(Date.parse(input.planDueDate))) return "invalid_plan_due_date"
+  // "ง. แนบรูปรวมที่ตรวจวันนี้" — at least one group photo (Preeyapan,
+  // htask-1791357251217). Not re-checked on a revision resubmit: group photos
+  // are locked while items are out for revision, so an audit first sent
+  // before this rule existed must still be able to send its fixes back.
+  if (!openRevisions.length && !GROUP_PHOTO_SLOTS.some((s) => photos.before.has(s))) return "missing_group_photo"
 
   const open = new Set(openRevisions)
   for (const item of input.items) {
@@ -251,6 +256,7 @@ export function validationMessage(code: string): string {
     item_missing_fail_photo: `ข้อ "${label}" ไม่ผ่าน ต้องแนบรูปสภาพที่ไม่ผ่าน`,
     item_missing_fix: `ข้อ "${label}" ไม่ผ่าน ต้องระบุวิธีแก้ไข`,
     invalid_plan_due_date: "กำหนดเสร็จของแผนการแก้ไขไม่ถูกต้อง",
+    missing_group_photo: "กรุณาแนบรูปรวมที่ตรวจวันนี้ (ข้อ ง.) อย่างน้อย 1 รูป",
     item_missing_photo: `ข้อ "${label}" ผ่าน ต้องแนบรูป`,
     item_missing_corrective_note: `ข้อ "${label}" ต้องระบุการแก้ไข (Corrective action)`,
     item_missing_after_photo: `ข้อ "${label}" ต้องแนบรูปหลังแก้ไข (After)`,

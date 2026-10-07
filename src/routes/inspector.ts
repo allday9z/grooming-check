@@ -208,7 +208,8 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     </div>
 
     <div class="card">
-      <h2>ง. แนบรูปรวมที่ตรวจวันนี้ <span style="font-weight:400;font-size:13px;color:#6b7a7a;">สูงสุด ${GROUP_PHOTO_SLOTS.length} รูป · ไม่บังคับ</span></h2>
+      <h2>ง. แนบรูปรวมที่ตรวจวันนี้<span class="req">*</span> <span style="font-weight:400;font-size:13px;color:#6b7a7a;">อย่างน้อย 1 รูป · สูงสุด ${GROUP_PHOTO_SLOTS.length} รูป</span></h2>
+      ${!revisionMode && editable ? `<div class="errmsg" id="group-err" style="margin:-4px 0 10px;">กรุณาแนบรูปรวมที่ตรวจวันนี้อย่างน้อย 1 รูป</div>` : ""}
       <div class="group-grid">
         ${GROUP_PHOTO_SLOTS.map((slot, i) => {
           const has = photos.before.has(slot)
@@ -231,7 +232,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
 
     ${editable ? `
     <button type="button" class="btn" id="submit-btn" style="width:100%;" disabled>${revisionMode ? "ส่งการแก้ไขกลับให้ HR (Corrective action submitted)" : "ส่งให้ HR ตรวจสอบ"}</button>
-    <p class="errmsg" id="submit-hint" style="text-align:center;margin-top:8px;">${revisionMode ? "กรุณาระบุการแก้ไขและแนบรูปหลังแก้ไขให้ครบทุกข้อที่ถูกขอแก้" : "กรุณากรอกข้อมูลและตรวจให้ครบทุกข้อก่อนส่ง"}</p>
+    <p class="errmsg" id="submit-hint" style="text-align:center;margin-top:8px;">${revisionMode ? "กรุณาระบุการแก้ไขและแนบรูปหลังแก้ไขให้ครบทุกข้อที่ถูกขอแก้" : "กรุณากรอกข้อมูล ตรวจให้ครบทุกข้อ และแนบรูปรวม (ข้อ ง.) อย่างน้อย 1 รูปก่อนส่ง"}</p>
     ` : ""}
     <div class="status-line" id="status-line" style="text-align:center;"></div>
   `
@@ -320,7 +321,12 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     var allValid = Array.prototype.every.call(document.querySelectorAll('.check-item'), itemValid);
     var headerOk = $('f-name').value.trim() && $('f-branch').value && $('f-date').value && $('f-position').value &&
       ($('f-position').value !== 'อื่นๆ' || $('f-position-other').value.trim()) && emailOk();
-    var ok = allValid && headerOk;
+    // ข้อ ง. needs at least one group photo (not re-checked in revision mode,
+    // where group photos are locked — matches the server rule).
+    var groupOk = REVISION_MODE || document.querySelectorAll('.group-img').length === 0 ||
+      Array.prototype.some.call(document.querySelectorAll('.group-img'), function(img) { return visible(img); });
+    var ge = $('group-err'); if (ge) ge.classList.toggle('show', !groupOk);
+    var ok = allValid && headerOk && groupOk;
     $('submit-btn').disabled = !ok;
     $('submit-hint').classList.toggle('show', !ok);
     $('email-err').classList.toggle('show', !emailOk());
@@ -417,7 +423,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     });
     var posOther = $('f-position-other'); if (posOther && !posOther.disabled) posOther.addEventListener('input', function() { updateSubmitState(); scheduleAutosave(); });
 
-    // "ง. แนบรูปรวมที่ตรวจวันนี้" — up to 5 optional overall photos.
+    // "ง. แนบรูปรวมที่ตรวจวันนี้" — 1 to 5 overall photos (at least 1 required).
     document.querySelectorAll('.group-slot').forEach(function(slotEl) {
       var slot = slotEl.getAttribute('data-slot');
       var input = slotEl.querySelector('.group-input');
@@ -432,6 +438,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
           if (!d.ok) { $('status-line').textContent = 'เกิดข้อผิดพลาด: ' + (d.error || ''); return; }
           img.src = '/api/inspect/' + TOKEN + '/photo/' + slot + '?kind=before&t=' + Date.now();
           img.style.display = 'block'; empty.style.display = 'none'; if (del) del.style.display = 'inline-block';
+          updateSubmitState();
           $('status-line').textContent = 'แนบรูปรวมแล้ว';
         }).catch(function() { $('status-line').textContent = 'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่'; });
         input.value = '';
@@ -439,7 +446,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       if (del) del.addEventListener('click', function() {
         if (!TOKEN || !confirm('ลบรูปนี้?')) return;
         fetch('/api/inspect/' + TOKEN + '/photo/' + slot + '/delete', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(d) {
-          if (d.ok) { img.style.display = 'none'; img.src = ''; empty.style.display = 'flex'; del.style.display = 'none'; }
+          if (d.ok) { img.style.display = 'none'; img.removeAttribute('src'); empty.style.display = 'flex'; del.style.display = 'none'; updateSubmitState(); }
         });
       });
     });
