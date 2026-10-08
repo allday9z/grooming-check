@@ -58,7 +58,7 @@ async function send(to: string[], subject: string, html: string): Promise<void> 
 export function notifyHrSubmitted(insp: any, resubmittedItems: string[]): void {
   const resub = resubmittedItems.length > 0
   const body = `
-    <p>${resub ? "ผู้ตรวจส่งการแก้ไข (Corrective action submitted) กลับมาแล้ว" : "มีรายการตรวจ Grooming ใหม่รอ HR ตรวจสอบ"}</p>
+    <p>${resub ? "ผู้ตรวจส่งการแก้ไข (Corrective action submitted) กลับมาแล้ว" : "มีรายการตรวจ Grooming ใหม่รอผู้บังคับบัญชาตรวจสอบ"}</p>
     <table style="font-size:14px;">
       <tr><td style="color:#6b7a7a;padding-right:12px;">รหัสการตรวจ</td><td><b>${inspectionCode(insp.id)}</b></td></tr>
       <tr><td style="color:#6b7a7a;padding-right:12px;">สาขา</td><td><b>${esc(insp.branch)}</b></td></tr>
@@ -74,13 +74,13 @@ export function notifyInspectorReviewed(insp: any, status: "approved" | "rejecte
   if (!insp.inspector_email) return
   const link = `${APP_ORIGIN}/inspect/${insp.public_token}`
   if (status === "approved") {
-    const body = `<p>รายการตรวจสาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} ได้รับการยืนยันจาก HR (${esc(reviewer)}) แล้ว</p>${overallComment ? `<p>หมายเหตุ: ${esc(overallComment)}</p>` : ""}`
+    const body = `<p>รายการตรวจสาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} ได้รับการยืนยันจากผู้บังคับบัญชาตามสายงาน (${esc(reviewer)}) แล้ว</p>${overallComment ? `<p>หมายเหตุ: ${esc(overallComment)}</p>` : ""}`
     void send([insp.inspector_email], `[Grooming] ${inspectionCode(insp.id)} อนุมัติแล้ว — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("รายการตรวจได้รับการอนุมัติ", body, link, "เปิดดูรายการตรวจ"))
     return
   }
   const list = revisions.map((r) => `<li><b>${esc(label(r.itemId))}</b><br><span style="color:#9c4a03;">${esc(r.comment)}</span></li>`).join("")
-  const body = `<p>HR (${esc(reviewer)}) ขอให้แก้ไขรายการตรวจรหัส <b>${inspectionCode(insp.id)}</b> สาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} จำนวน ${revisions.length} ข้อ:</p>
+  const body = `<p>ผู้บังคับบัญชา (${esc(reviewer)}) ขอให้แก้ไขรายการตรวจรหัส <b>${inspectionCode(insp.id)}</b> สาขา <b>${esc(insp.branch)}</b> วันที่ ${fmtDateTH(insp.inspect_date)} จำนวน ${revisions.length} ข้อ:</p>
     <ul>${list}</ul>${overallComment ? `<p>หมายเหตุเพิ่มเติม: ${esc(overallComment)}</p>` : ""}
     <p>กรุณาแก้ไขเฉพาะข้อที่ระบุ แนบรูปหลังแก้ไข (After) และระบุการแก้ไข แล้วกดส่งกลับ</p>`
-  void send([insp.inspector_email], `[Grooming] ${inspectionCode(insp.id)} ขอให้แก้ไข ${revisions.length} ข้อ — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("HR ขอให้แก้ไขรายการตรวจ", body, link, "เปิดแก้ไขรายการตรวจ"))
+  void send([insp.inspector_email], `[Grooming] ${inspectionCode(insp.id)} ขอให้แก้ไข ${revisions.length} ข้อ — ${insp.branch} ${fmtDateTH(insp.inspect_date)}`, shell("ผู้บังคับบัญชาขอให้แก้ไขรายการตรวจ", body, link, "เปิดแก้ไขรายการตรวจ"))
 }

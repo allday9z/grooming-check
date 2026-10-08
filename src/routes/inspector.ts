@@ -34,7 +34,7 @@ app.get("/", async (c) => {
   const body = `
     <div class="top-nav">
       <h1 style="margin:0;">รายการตรวจ Grooming</h1>
-      <a href="/hr">🔒 สำหรับฝ่าย HR →</a>
+      <a href="/hr">🔒 สำหรับผู้บังคับบัญชาตามสายงาน →</a>
     </div>
     <a class="btn" href="/inspect/new" style="display:block;margin-bottom:16px;">+ สร้างรายการตรวจใหม่</a>
     ${filterBarHtml("/inspect", f)}
@@ -99,7 +99,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
 
   const rejectBanner = status === "rejected"
     ? revisionMode
-      ? `<div class="reject-banner"><b>HR (${esc(insp.hr_reviewer)}) ขอให้แก้ไข ${openRev.length} ข้อ</b>
+      ? `<div class="reject-banner"><b>ผู้บังคับบัญชา (${esc(insp.hr_reviewer)}) ขอให้แก้ไข ${openRev.length} ข้อ</b>
           <p style="margin:6px 0 0;">แก้ไขได้เฉพาะข้อที่ไฮไลต์สีส้มด้านล่าง — แต่ละข้อต้องระบุการแก้ไข (Corrective action) และแนบรูปหลังแก้ไข (After) แล้วกดส่งกลับ</p>
           ${insp.hr_comment ? `<p style="margin:6px 0 0;">หมายเหตุเพิ่มเติม: ${esc(insp.hr_comment)}</p>` : ""}</div>`
       : insp.hr_comment ? `<div class="reject-banner"><b>ถูกตีกลับโดย ${esc(insp.hr_reviewer)}</b><p style="margin:6px 0 0;">${esc(insp.hr_comment)}</p></div>` : ""
@@ -117,10 +117,10 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       const hasBefore = photos.before.has(def.itemId)
       const hasAfter = photos.after.has(def.itemId)
       const doneClass = result === "pass" ? " done-pass" : result === "fail" ? " done-fail" : ""
-      const lockedTag = revisionMode && !isRev ? `<span class="item-tag ok">✔ HR ยืนยันแล้ว</span>` : cur?.confirmed && status !== "draft" ? `<span class="item-tag ok">✔ HR ยืนยันแล้ว</span>` : ""
+      const lockedTag = revisionMode && !isRev ? `<span class="item-tag ok">✔ ผู้บังคับบัญชายืนยันแล้ว</span>` : cur?.confirmed && status !== "draft" ? `<span class="item-tag ok">✔ ผู้บังคับบัญชายืนยันแล้ว</span>` : ""
       const revBox = isRev ? `
         <div class="rev-box">
-          <div class="rev-title">HR ขอให้แก้ไข (Request revision) — รอบที่ ${cur.revision.cycle}</div>
+          <div class="rev-title">ผู้บังคับบัญชาขอให้แก้ไข (Request revision) — รอบที่ ${cur.revision.cycle}</div>
           <div class="rev-comment">${esc(cur.revision.comment)}</div>
           <div class="rev-by">โดย ${esc(cur.revision.by)} · ${fmtDateTimeTH(cur.revision.at)}</div>
         </div>` : ""
@@ -186,7 +186,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
       <p class="sub">${isNew ? "ระบบจะบันทึกฉบับร่างให้อัตโนมัติเมื่อเริ่มกรอกข้อมูล" : `รหัสการตรวจ <b>${inspectionCode(insp.id)}</b> · รอบตรวจที่ ${insp.cycle}`}</p>
 
       <div class="field"><label>ชื่อผู้ตรวจ<span class="req">*</span></label><input type="text" id="f-name" value="${esc(insp?.inspector_name ?? "")}" ${dis}></div>
-      <div class="field"><label>อีเมลผู้ตรวจ<span class="req">*</span> <span style="font-weight:400;color:#6b7a7a;">(สำหรับรับแจ้งเตือนเมื่อ HR ขอให้แก้ไข/อนุมัติ)</span></label><input type="text" inputmode="email" id="f-email" value="${esc(insp?.inspector_email ?? "")}" placeholder="name@uficon.com" ${dis}><div class="errmsg" id="email-err">รูปแบบอีเมลไม่ถูกต้อง</div></div>
+      <div class="field"><label>อีเมลผู้ตรวจ<span class="req">*</span> <span style="font-weight:400;color:#6b7a7a;">(สำหรับรับแจ้งเตือนเมื่อผู้บังคับบัญชาขอให้แก้ไข/อนุมัติ)</span></label><input type="text" inputmode="email" id="f-email" value="${esc(insp?.inspector_email ?? "")}" placeholder="name@uficon.com" ${dis}><div class="errmsg" id="email-err">รูปแบบอีเมลไม่ถูกต้อง</div></div>
       <div class="field">
         <label>ตำแหน่ง<span class="req">*</span></label>
         <select id="f-position" ${dis}>
@@ -231,7 +231,7 @@ function renderForm(insp: any | null, photos: { before: Set<string>; after: Set<
     </div>
 
     ${editable ? `
-    <button type="button" class="btn" id="submit-btn" style="width:100%;" disabled>${revisionMode ? "ส่งการแก้ไขกลับให้ HR (Corrective action submitted)" : "ส่งให้ HR ตรวจสอบ"}</button>
+    <button type="button" class="btn" id="submit-btn" style="width:100%;" disabled>${revisionMode ? "ส่งการแก้ไขกลับให้ผู้บังคับบัญชา (Corrective action submitted)" : "ส่งให้ผู้บังคับบัญชาตรวจสอบ"}</button>
     <p class="errmsg" id="submit-hint" style="text-align:center;margin-top:8px;">${revisionMode ? "กรุณาระบุการแก้ไขและแนบรูปหลังแก้ไขให้ครบทุกข้อที่ถูกขอแก้" : "กรุณากรอกข้อมูล ตรวจให้ครบทุกข้อ และแนบรูปรวม (ข้อ ง.) อย่างน้อย 1 รูปก่อนส่ง"}</p>
     ` : ""}
     <div class="status-line" id="status-line" style="text-align:center;"></div>

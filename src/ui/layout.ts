@@ -127,7 +127,7 @@ export function esc(s: any): string {
 
 export const STATUS_LABEL: Record<string, string> = {
   draft: "ฉบับร่าง",
-  pending: "รอ HR ตรวจสอบ",
+  pending: "รอผู้บังคับบัญชาตรวจสอบ",
   approved: "อนุมัติแล้ว",
   rejected: "ตีกลับ",
 }
