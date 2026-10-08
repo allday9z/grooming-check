@@ -73,7 +73,7 @@ function resultLabel(r: any): string {
 }
 
 export function exportXlsx(rows: any[]): Uint8Array {
-  const header = ["รหัสการตรวจ", "สาขา", "วันที่ตรวจ", "ผู้ตรวจ", "ตำแหน่ง", "สถานะ", "คะแนน", "%", "ผลรวม", "รอบ", "ส่งเมื่อ", "ผู้ตรวจสอบ (ผู้บังคับบัญชาตามสายงาน)",
+  const header = ["รหัสการตรวจ", "สาขา", "วันที่ตรวจ", "ผู้ตรวจ", "ตำแหน่ง", "สถานะ", "คะแนน", "%", "ผลรวม", "รอบ", "ส่งเมื่อ", "ผู้ตรวจสอบ (หัวหน้างาน)",
     "แผนแก้ไข: ปัญหาที่พบ", "แผนแก้ไข: แนวทางแก้ไข", "แผนแก้ไข: กำหนดเสร็จ", "แผนแก้ไข: สถานะกำหนด", ...CHECKLIST_ITEMS.map((i) => i.label)]
   const data = rows.map((r) => {
     const items = new Map(parseJsonbArray<any>(r.items).map((i) => [i.itemId, i]))
@@ -280,7 +280,7 @@ export function summaryXlsx(d: SummaryData, f: ListFilters): Uint8Array {
     ["ไม่ผ่าน", d.failed],
     ["คะแนนเฉลี่ย (%)", d.avgPercent],
     ["อนุมัติแล้ว", d.byStatus.approved ?? 0],
-    ["รอผู้บังคับบัญชาตรวจสอบ", d.byStatus.pending ?? 0],
+    ["รอหัวหน้างานตรวจสอบ", d.byStatus.pending ?? 0],
     ["รอผู้ตรวจแก้ไข", d.byStatus.rejected ?? 0],
   ]
   const s1 = XLSX.utils.aoa_to_sheet(overview)

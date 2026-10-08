@@ -18,9 +18,9 @@ app.get("/login", async (c) => {
   const nextPath = safeNext(c.req.query("next"))
   const body = `
     <div class="card" style="max-width:420px;margin:40px auto;">
-      <h1 style="margin:0 0 4px;">สำหรับผู้บังคับบัญชาตามสายงาน</h1>
-      <p class="sub">กรุณาใส่รหัสผ่านเพื่อเข้าสู่แดชบอร์ดผู้บังคับบัญชาตามสายงาน</p>
-      ${err ? `<div class="reject-banner" style="margin-bottom:12px;">${err === "nopw" ? "ยังไม่ได้ตั้งรหัสผ่านผู้บังคับบัญชาในระบบ กรุณาติดต่อผู้ดูแลระบบ" : "รหัสผ่านไม่ถูกต้อง"}</div>` : ""}
+      <h1 style="margin:0 0 4px;">สำหรับหัวหน้างาน</h1>
+      <p class="sub">กรุณาใส่รหัสผ่านเพื่อเข้าสู่แดชบอร์ดหัวหน้างาน</p>
+      ${err ? `<div class="reject-banner" style="margin-bottom:12px;">${err === "nopw" ? "ยังไม่ได้ตั้งรหัสผ่านหัวหน้างานในระบบ กรุณาติดต่อผู้ดูแลระบบ" : "รหัสผ่านไม่ถูกต้อง"}</div>` : ""}
       <form method="post" action="/hr/login">
         <input type="hidden" name="next" value="${esc(nextPath)}">
         <div class="field"><label>รหัสผ่าน<span class="req">*</span></label><input type="password" name="password" required autofocus autocomplete="current-password" style="width:100%;padding:10px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:15px;"></div>
@@ -28,7 +28,7 @@ app.get("/login", async (c) => {
       </form>
       <p style="margin:14px 0 0;text-align:center;"><a href="/inspect" style="color:var(--brand);font-size:13.5px;">← กลับหน้าผู้ตรวจ</a></p>
     </div>`
-  return c.html(renderPage({ title: "เข้าสู่ระบบผู้บังคับบัญชา — Grooming Check", body }))
+  return c.html(renderPage({ title: "เข้าสู่ระบบหัวหน้างาน — Grooming Check", body }))
 })
 
 app.post("/login", async (c) => {
@@ -96,7 +96,7 @@ app.get("/", async (c) => {
 
   const body = `
     <div class="top-nav">
-      <h1 style="margin:0;">แดชบอร์ดผู้บังคับบัญชาตามสายงาน — ตรวจ Grooming</h1>
+      <h1 style="margin:0;">แดชบอร์ดหัวหน้างาน — ตรวจ Grooming</h1>
       <span style="display:flex;gap:12px;flex-wrap:wrap;"><a href="/hr/summary">รายงานสรุปผลตรวจ →</a><a href="/inspect">← กลับหน้าผู้ตรวจ</a><a href="/hr/logout">ออกจากระบบ</a></span>
     </div>
     <div class="stat-grid">
@@ -119,7 +119,7 @@ app.get("/", async (c) => {
       ${paginationHtml("/hr", f, page, pages, total)}
     </div>
     ${DELETE_MODAL_HTML}`
-  return c.html(renderPage({ title: "แดชบอร์ดผู้บังคับบัญชา — Grooming Check", body, styles: LIST_STYLES + DELETE_MODAL_STYLES, scripts: DELETE_MODAL_SCRIPT, wide: true }))
+  return c.html(renderPage({ title: "แดชบอร์ดหัวหน้างาน — Grooming Check", body, styles: LIST_STYLES + DELETE_MODAL_STYLES, scripts: DELETE_MODAL_SCRIPT, wide: true }))
 })
 
 app.get("/export.xlsx", async (c) => {
@@ -129,7 +129,7 @@ app.get("/export.xlsx", async (c) => {
 
 app.get("/report", async (c) => {
   const f = filtersFromQuery((k) => c.req.query(k))
-  return c.html(reportHtml("รายงานการตรวจ Grooming (ผู้บังคับบัญชา)", await listForExport({ ...f, excludeDrafts: true }), f))
+  return c.html(reportHtml("รายงานการตรวจ Grooming (หัวหน้างาน)", await listForExport({ ...f, excludeDrafts: true }), f))
 })
 
 // Summary report (htask-1791121739323 #15.3) — on screen + PDF (print) + Excel.
@@ -144,7 +144,7 @@ app.get("/summary", async (c) => {
   const qs = queryString({ branch: f.branch, from: f.from, to: f.to })
   const branchOpts = BRANCHES.map((b) => `<option value="${esc(b)}"${b === f.branch ? " selected" : ""}>${esc(b)}</option>`).join("")
   const body = `
-    <div class="top-nav"><h1 style="margin:0;">รายงานสรุปผลตรวจเครื่องแต่งกายพนักงานหน้าร้าน</h1><a href="/hr">← แดชบอร์ดผู้บังคับบัญชา</a></div>
+    <div class="top-nav"><h1 style="margin:0;">รายงานสรุปผลตรวจเครื่องแต่งกายพนักงานหน้าร้าน</h1><a href="/hr">← แดชบอร์ดหัวหน้างาน</a></div>
     <form class="filter-bar" method="get" action="/hr/summary">
       <div class="fb-field"><label>สาขา</label><select name="branch"><option value="">ทุกสาขา</option>${branchOpts}</select></div>
       <div class="fb-field"><label>ตั้งแต่วันที่</label><input type="date" name="from" value="${esc(f.from ?? "")}"></div>
@@ -241,7 +241,7 @@ app.get("/:id", async (c) => {
     <div class="card review-card">
       <h2>ยืนยันผลการตรวจ</h2>
       <p class="sub">ติ๊ก "ขอให้แก้ไขข้อนี้" พร้อมความเห็นในข้อที่ต้องการให้แก้ แล้วกด <b>Confirm Entire Audit ID</b> — ข้อที่ไม่ได้ติ๊กจะถูกยืนยันและปิด (แก้ไขไม่ได้อีก) · ถ้าไม่ติ๊กเลย = อนุมัติทั้งรายการ</p>
-      <div class="field"><label>ชื่อผู้ตรวจสอบ (ผู้บังคับบัญชาตามสายงาน)<span class="req">*</span></label><input type="text" id="reviewer"></div>
+      <div class="field"><label>ชื่อผู้ตรวจสอบ (หัวหน้างาน)<span class="req">*</span></label><input type="text" id="reviewer"></div>
       <div class="field"><label>หมายเหตุถึงผู้ตรวจ (ไม่บังคับ)</label><textarea id="overall-comment" rows="2"></textarea></div>
       <p id="review-summary" class="sub" style="margin:0 0 10px;"></p>
       <button type="button" class="btn" id="confirm-btn" style="width:100%;">Confirm Entire Audit ID</button>
@@ -250,7 +250,7 @@ app.get("/:id", async (c) => {
     </div>` : ""
 
   const body = `
-    <div class="top-nav"><a href="/hr">← แดชบอร์ดผู้บังคับบัญชา</a><button type="button" class="btn btn-danger btn-xs" onclick="openDelete(${insp.id}, ${esc(JSON.stringify(deleteLabel(insp)))})">ลบเอกสารนี้</button></div>
+    <div class="top-nav"><a href="/hr">← แดชบอร์ดหัวหน้างาน</a><button type="button" class="btn btn-danger btn-xs" onclick="openDelete(${insp.id}, ${esc(JSON.stringify(deleteLabel(insp)))})">ลบเอกสารนี้</button></div>
     <div class="card">
       <h1 style="margin:0 0 4px;">${esc(insp.branch)} ${statusBadge(insp.status)}</h1>
       <p class="sub">รหัสการตรวจ (Audit ID) <b>${inspectionCode(insp.id)}</b> · รอบตรวจที่ ${insp.cycle}</p>
@@ -266,7 +266,7 @@ app.get("/:id", async (c) => {
         <div class="stat-box"><div class="num">${insp.overall_result === "pass" ? "ผ่าน" : insp.overall_result === "fail" ? "ไม่ผ่าน" : "-"}</div><div class="label">ผลรวม (เกณฑ์: ${PASS_RULE_LABEL})</div></div>
       </div>
     </div>
-    ${insp.hr_comment ? `<div class="reject-banner"><b>หมายเหตุล่าสุดจากผู้บังคับบัญชา (${esc(insp.hr_reviewer)})</b><p style="margin:6px 0 0;">${esc(insp.hr_comment)}</p></div>` : ""}
+    ${insp.hr_comment ? `<div class="reject-banner"><b>หมายเหตุล่าสุดจากหัวหน้างาน (${esc(insp.hr_reviewer)})</b><p style="margin:6px 0 0;">${esc(insp.hr_comment)}</p></div>` : ""}
     <div class="card">
       <h2>รายการตรวจทั้ง ${CHECKLIST_TOTAL} ข้อ ${reviewing ? `<span class="sub" style="font-weight:400;">· รอยืนยัน ${openCount} ข้อ</span>` : ""}</h2>
       ${checklistHtml}
@@ -309,7 +309,7 @@ app.get("/:id", async (c) => {
     var reviewer = $('reviewer').value.trim();
     var err = $('review-err');
     err.classList.remove('show');
-    if (!reviewer) { err.textContent = 'กรุณากรอกชื่อผู้ตรวจสอบ (ผู้บังคับบัญชาตามสายงาน)'; err.classList.add('show'); $('reviewer').focus(); return; }
+    if (!reviewer) { err.textContent = 'กรุณากรอกชื่อผู้ตรวจสอบ (หัวหน้างาน)'; err.classList.add('show'); $('reviewer').focus(); return; }
     var revisions = [], missing = false;
     document.querySelectorAll('.rev-check:checked').forEach(function(cb) {
       var item = cb.closest('.check-item');
@@ -440,8 +440,8 @@ const DELETE_MODAL_HTML = `
   <div class="dm" role="dialog" aria-modal="true" aria-labelledby="dm-title">
     <h3 id="dm-title">ยืนยันการลบเอกสาร</h3>
     <div class="dm-doc" id="dm-doc"></div>
-    <p class="dm-warn">เอกสารนี้จะหายจากทุกหน้า (ผู้ตรวจ, ผู้บังคับบัญชา, รายงาน, Excel) — ระบบเก็บประวัติไว้ว่าใครลบและเพราะอะไร</p>
-    <label for="dm-by">ชื่อผู้ลบ (ผู้บังคับบัญชา)<span style="color:var(--fail);">*</span></label>
+    <p class="dm-warn">เอกสารนี้จะหายจากทุกหน้า (ผู้ตรวจ, หัวหน้างาน, รายงาน, Excel) — ระบบเก็บประวัติไว้ว่าใครลบและเพราะอะไร</p>
+    <label for="dm-by">ชื่อผู้ลบ (หัวหน้างาน)<span style="color:var(--fail);">*</span></label>
     <input id="dm-by" type="text" autocomplete="name">
     <label for="dm-reason">เหตุผล (ไม่บังคับ)</label>
     <input id="dm-reason" type="text" placeholder="เช่น ส่งซ้ำ / กรอกผิดสาขา">

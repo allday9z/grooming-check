@@ -427,7 +427,7 @@ export async function hrDeleteAudit(id: number, by: string, reason: string | nul
   const [insp] = await sql`SELECT id, branch, cycle, history FROM inspections WHERE id = ${id} AND deleted_at IS NULL`
   if (!insp) return null
   const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
-  history.push({ action: "deleted", by: `${by} (ผู้บังคับบัญชา)`, at: new Date().toISOString(), cycle: insp.cycle, comment: reason })
+  history.push({ action: "deleted", by: `${by} (หัวหน้างาน)`, at: new Date().toISOString(), cycle: insp.cycle, comment: reason })
   await sql`UPDATE inspections SET deleted_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW() WHERE id = ${id} AND deleted_at IS NULL`
   return { code: inspectionCode(insp.id), branch: insp.branch }
 }
