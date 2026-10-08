@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { renderPage, esc, statusBadge, planDueBadge } from "../ui/layout"
 import { CHECKLIST_ITEMS, CATEGORY_LABELS, CHECKLIST_TOTAL, GROUP_PHOTO_SLOTS } from "../lib/checklist"
-import { countByStatus, getById, reviewAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, inspectionCode, PASS_THRESHOLD_PERCENT, PASS_RULE_LABEL } from "../lib/inspections"
+import { countByStatus, getById, reviewAudit, hrDeleteAudit, parseJsonbArray, listFiltered, listForExport, planDueState, countPlanDue, inspectionCode, PASS_THRESHOLD_PERCENT, PASS_RULE_LABEL } from "../lib/inspections"
 import { listPhotoKinds } from "../lib/photos"
 import { fmtDateTH, fmtDateTimeTH } from "../lib/format"
 import { filtersFromQuery, filterBarHtml, paginationHtml, queryString, xlsxResponse, reportHtml, LIST_STYLES, buildSummary, summaryBodyHtml, summaryPrintHtml, summaryXlsx, SUMMARY_STYLES } from "../lib/report"
@@ -90,8 +90,9 @@ app.get("/", async (c) => {
           <td>${r.cycle}</td>
           <td>${fmtDateTimeTH(r.submitted_at)}</td>
           <td>${r.plan_due_date ? `${fmtDateTH(r.plan_due_date)} ${planDueBadge(planDueState(r))}` : "-"}</td>
+          <td><button type="button" class="btn btn-danger btn-xs" onclick="event.stopPropagation();openDelete(${r.id}, ${esc(JSON.stringify(deleteLabel(r)))})">ลบ</button></td>
         </tr>`).join("")
-    : `<tr><td colspan="10" style="text-align:center;color:#94a3b8;">ไม่พบรายการ</td></tr>`
+    : `<tr><td colspan="11" style="text-align:center;color:#94a3b8;">ไม่พบรายการ</td></tr>`
 
   const body = `
     <div class="top-nav">
@@ -105,18 +106,20 @@ app.get("/", async (c) => {
       <div class="stat-box"${due.overdue ? ' style="border-color:#f0a8a8;background:#fdf5f5;"' : ""}><div class="num" style="color:${due.overdue ? "#c22b2b" : "inherit"};">${due.overdue}</div><div class="label">แผนแก้ไขเกินกำหนด</div></div>
       <div class="stat-box"${due.soon ? ' style="border-color:#f5c98a;background:#fffaf2;"' : ""}><div class="num" style="color:${due.soon ? "#b45309" : "inherit"};">${due.soon}</div><div class="label">ใกล้ครบกำหนด (≤ 3 วัน)</div></div>
     </div>
+    ${deletedBanner(c.req.query("deleted"))}
     <div class="tabs">${tabsHtml}</div>
     ${filterBarHtml("/hr", f, { keepStatus: true })}
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>รหัสการตรวจ</th><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>รอบ</th><th>ส่งเมื่อ</th><th>กำหนดเสร็จแผนแก้ไข</th></tr></thead>
+          <thead><tr><th>รหัสการตรวจ</th><th>สาขา</th><th>สถานะ</th><th>ผู้ตรวจ</th><th>วันที่ตรวจ</th><th>คะแนน</th><th>ผลรวม</th><th>รอบ</th><th>ส่งเมื่อ</th><th>กำหนดเสร็จแผนแก้ไข</th><th></th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
       ${paginationHtml("/hr", f, page, pages, total)}
-    </div>`
-  return c.html(renderPage({ title: "แดชบอร์ด HR — Grooming Check", body, styles: LIST_STYLES, wide: true }))
+    </div>
+    ${DELETE_MODAL_HTML}`
+  return c.html(renderPage({ title: "แดชบอร์ด HR — Grooming Check", body, styles: LIST_STYLES + DELETE_MODAL_STYLES, scripts: DELETE_MODAL_SCRIPT, wide: true }))
 })
 
 app.get("/export.xlsx", async (c) => {
@@ -247,7 +250,7 @@ app.get("/:id", async (c) => {
     </div>` : ""
 
   const body = `
-    <div class="top-nav"><a href="/hr">← แดชบอร์ด HR</a></div>
+    <div class="top-nav"><a href="/hr">← แดชบอร์ด HR</a><button type="button" class="btn btn-danger btn-xs" onclick="openDelete(${insp.id}, ${esc(JSON.stringify(deleteLabel(insp)))})">ลบเอกสารนี้</button></div>
     <div class="card">
       <h1 style="margin:0 0 4px;">${esc(insp.branch)} ${statusBadge(insp.status)}</h1>
       <p class="sub">รหัสการตรวจ (Audit ID) <b>${inspectionCode(insp.id)}</b> · รอบตรวจที่ ${insp.cycle}</p>
@@ -332,7 +335,7 @@ app.get("/:id", async (c) => {
   });
 })();` : ""
 
-  return c.html(renderPage({ title: `รายละเอียดการตรวจ — ${insp.branch}`, body, scripts, wide: true }))
+  return c.html(renderPage({ title: `รายละเอียดการตรวจ — ${insp.branch}`, body: body + DELETE_MODAL_HTML, styles: DELETE_MODAL_STYLES, scripts: scripts + DELETE_MODAL_SCRIPT, wide: true }))
 })
 
 // "Confirm Entire Audit ID" (htask-1791116230138 #5): revisions = items HR
@@ -389,5 +392,97 @@ app.post("/:id/reject", async (c) => {
     return c.json({ error: e.message }, 400)
   }
 })
+
+// ---- HR-only delete (Preeyapan, htask-1791426505254) ----
+// Behind requireHr like everything else here (no HR cookie -> 401). Every
+// delete goes through the confirmation dialog, and the server also insists
+// on confirm=true + the name of the HR person deleting.
+app.post("/:id/delete", async (c) => {
+  const id = parseInt(c.req.param("id"), 10)
+  if (isNaN(id)) return c.json({ error: "not_found" }, 404)
+  const body = await c.req.json().catch(() => null)
+  if (body?.confirm !== true) return c.json({ error: "confirm_required" }, 400)
+  const by = String(body?.by || "").trim().slice(0, 100)
+  if (!by) return c.json({ error: "name_required" }, 400)
+  const reason = String(body?.reason || "").trim().slice(0, 500) || null
+  const done = await hrDeleteAudit(id, by, reason)
+  if (!done) return c.json({ error: "not_found" }, 404)
+  console.log(`[hr] deleted ${done.code} (${done.branch}) by ${by}${reason ? ` — ${reason}` : ""}`)
+  return c.json({ ok: true, code: done.code })
+})
+
+function deleteLabel(r: any): string {
+  return `${inspectionCode(r.id)} · ${r.branch || "-"} · ${fmtDateTH(r.inspect_date)} · ผู้ตรวจ ${r.inspector_name || "-"}`
+}
+
+function deletedBanner(code: string | undefined): string {
+  if (!code || !/^GC-\d+$/.test(code)) return ""
+  return `<div class="deleted-banner">ลบเอกสาร <b>${esc(code)}</b> แล้ว</div>`
+}
+
+const DELETE_MODAL_STYLES = `
+  .deleted-banner { background:#fdf2f2; border:1px solid #f0b4b4; color:#9b1c1c; border-radius:10px; padding:10px 14px; margin-bottom:12px; font-weight:600; }
+  .dm-bg { position:fixed; inset:0; background:rgba(15,23,23,.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:16px; }
+  .dm-bg[hidden] { display:none; }
+  .dm { background:#fff; border-radius:14px; max-width:460px; width:100%; padding:20px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
+  .dm h3 { margin:0 0 6px; color:var(--fail); font-size:19px; }
+  .dm .dm-doc { background:#fdf5f5; border:1px solid #f0c4c4; border-radius:10px; padding:10px 12px; margin:10px 0 12px; font-weight:600; font-size:14px; }
+  .dm .dm-warn { color:#6b7a7a; font-size:13.5px; margin:0 0 12px; }
+  .dm label { display:block; font-weight:600; font-size:14px; margin:8px 0 4px; }
+  .dm input { width:100%; padding:9px 11px; border:1px solid var(--border); border-radius:8px; font:inherit; }
+  .dm .dm-err { color:var(--fail); font-size:13px; min-height:18px; margin-top:6px; }
+  .dm .dm-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
+  .dm .dm-actions .btn-cancel { background:#eef2f2; color:var(--text); }
+`
+
+const DELETE_MODAL_HTML = `
+<div class="dm-bg" id="dm" hidden>
+  <div class="dm" role="dialog" aria-modal="true" aria-labelledby="dm-title">
+    <h3 id="dm-title">ยืนยันการลบเอกสาร</h3>
+    <div class="dm-doc" id="dm-doc"></div>
+    <p class="dm-warn">เอกสารนี้จะหายจากทุกหน้า (ผู้ตรวจ, HR, รายงาน, Excel) — ระบบเก็บประวัติไว้ว่าใครลบและเพราะอะไร</p>
+    <label for="dm-by">ชื่อผู้ลบ (HR)<span style="color:var(--fail);">*</span></label>
+    <input id="dm-by" type="text" autocomplete="name">
+    <label for="dm-reason">เหตุผล (ไม่บังคับ)</label>
+    <input id="dm-reason" type="text" placeholder="เช่น ส่งซ้ำ / กรอกผิดสาขา">
+    <div class="dm-err" id="dm-err"></div>
+    <div class="dm-actions">
+      <button type="button" class="btn btn-cancel" id="dm-cancel">ยกเลิก</button>
+      <button type="button" class="btn btn-danger" id="dm-ok">ยืนยันลบ</button>
+    </div>
+  </div>
+</div>`
+
+const DELETE_MODAL_SCRIPT = `
+(function(){
+  var dm = document.getElementById('dm'), cur = null;
+  function close(){ dm.hidden = true; cur = null; }
+  window.openDelete = function(id, label){
+    cur = id;
+    document.getElementById('dm-doc').textContent = label;
+    document.getElementById('dm-err').textContent = '';
+    document.getElementById('dm-reason').value = '';
+    var by = document.getElementById('dm-by');
+    try { by.value = localStorage.getItem('gc_hr_name') || ''; } catch (e) {}
+    dm.hidden = false;
+    (by.value ? document.getElementById('dm-reason') : by).focus();
+  };
+  document.getElementById('dm-cancel').addEventListener('click', close);
+  dm.addEventListener('click', function(e){ if (e.target === dm) close(); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && !dm.hidden) close(); });
+  document.getElementById('dm-ok').addEventListener('click', async function(){
+    var by = document.getElementById('dm-by').value.trim(), err = document.getElementById('dm-err'), btn = this;
+    if (!by) { err.textContent = 'กรุณากรอกชื่อผู้ลบ'; document.getElementById('dm-by').focus(); return; }
+    try { localStorage.setItem('gc_hr_name', by); } catch (e) {}
+    btn.disabled = true; err.textContent = '';
+    try {
+      var res = await fetch('/hr/' + cur + '/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true, by: by, reason: document.getElementById('dm-reason').value.trim() }) });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok) { err.textContent = res.status === 401 ? 'หมดเวลาการเข้าสู่ระบบ HR กรุณาเข้าสู่ระบบใหม่' : 'ลบไม่สำเร็จ: ' + (data.error || res.status); btn.disabled = false; return; }
+      window.location = '/hr?status=all&deleted=' + encodeURIComponent(data.code);
+    } catch (e) { err.textContent = 'เชื่อมต่อไม่ได้ กรุณาลองใหม่'; btn.disabled = false; }
+  });
+})();`
 
 export default app

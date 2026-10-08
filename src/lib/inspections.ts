@@ -419,6 +419,19 @@ export async function softDelete(id: number): Promise<void> {
   await sql`UPDATE inspections SET deleted_at = NOW() WHERE id = ${id}`
 }
 
+/** HR deletes an audit (Preeyapan, htask-1791426505254 — HR only, confirmed
+ * every time). Soft delete: the row disappears everywhere (inspector list,
+ * HR, reports, exports) but stays in the DB with a "deleted" history entry
+ * saying who deleted it and why, so it can be restored if needed. */
+export async function hrDeleteAudit(id: number, by: string, reason: string | null): Promise<{ code: string; branch: string } | null> {
+  const [insp] = await sql`SELECT id, branch, cycle, history FROM inspections WHERE id = ${id} AND deleted_at IS NULL`
+  if (!insp) return null
+  const history: HistoryEntry[] = parseJsonbArray<HistoryEntry>(insp.history)
+  history.push({ action: "deleted", by: `${by} (HR)`, at: new Date().toISOString(), cycle: insp.cycle, comment: reason })
+  await sql`UPDATE inspections SET deleted_at = NOW(), history = ${JSON.stringify(history)}, updated_at = NOW() WHERE id = ${id} AND deleted_at IS NULL`
+  return { code: inspectionCode(insp.id), branch: insp.branch }
+}
+
 /** Inspector deletes their own draft (htask-1791116230138 #9) — drafts
  * only; once submitted it's part of the HR record. */
 export async function deleteDraft(token: string): Promise<void> {
